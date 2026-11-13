@@ -5,10 +5,15 @@ from datetime import date, datetime
 
 from cyclescope.domain.entities import Industry
 from cyclescope.domain.entities.company import Company
+from cyclescope.domain.entities.company_industry_exposure import CompanyIndustryExposure
 from cyclescope.domain.entities.daily_price import DailyPrice
 from cyclescope.domain.entities.data_source import DataSource
+from cyclescope.domain.entities.exchange import Exchange
 from cyclescope.domain.entities.fx_rate import FxRate
+from cyclescope.domain.entities.listing import Listing
+from cyclescope.domain.entities.listing_status_event import ListingStatusEvent
 from cyclescope.domain.entities.security import Security
+from cyclescope.domain.entities.security_identifier import SecurityIdentifier
 from cyclescope.domain.entities.sub_industry import SubIndustry
 from cyclescope.domain.value_objects.market_data import CurrencyPair, MarketDataPeriod
 
@@ -51,6 +56,56 @@ class CompanyRepository(Repository[Company], ABC):
 
 class SecurityRepository(Repository[Security], ABC):
     """Security persistence contract."""
+
+
+class ExchangeRepository(Repository[Exchange], ABC):
+    """Exchange master persistence contract."""
+
+
+class SecurityIdentifierRepository(Repository[SecurityIdentifier], ABC):
+    """Security identifier persistence contract."""
+
+    @abstractmethod
+    def list_by_security(self, security_id: int) -> list[SecurityIdentifier]:
+        """Return current and historical identifiers in effective-date order."""
+
+    @abstractmethod
+    def list_by_identifier(
+        self, identifier_type: str, identifier_value: str, exchange_id: int | None
+    ) -> list[SecurityIdentifier]:
+        """Return identifiers sharing a provider-neutral identifier scope."""
+
+
+class ListingRepository(Repository[Listing], ABC):
+    """Append-oriented exchange listing history persistence contract."""
+
+    @abstractmethod
+    def list_by_security(self, security_id: int) -> list[Listing]:
+        """Return listing lifecycle records for one security."""
+
+    @abstractmethod
+    def list_by_exchange_ticker(self, exchange_id: int, ticker: str) -> list[Listing]:
+        """Return lifecycle records for a ticker on one exchange."""
+
+
+class ListingStatusEventRepository(ABC):
+    """Append-only listing status history contract."""
+
+    @abstractmethod
+    def create(self, event: ListingStatusEvent) -> ListingStatusEvent:
+        """Persist a status transition event."""
+
+    @abstractmethod
+    def list_by_listing(self, listing_id: int) -> list[ListingStatusEvent]:
+        """Return chronological listing status transitions."""
+
+
+class CompanyIndustryExposureRepository(Repository[CompanyIndustryExposure], ABC):
+    """Company industry exposure persistence contract."""
+
+    @abstractmethod
+    def list_by_company(self, company_id: int) -> list[CompanyIndustryExposure]:
+        """Return all effective and historical exposures for one company."""
 
 
 class DataSourceRepository(Repository[DataSource], ABC):

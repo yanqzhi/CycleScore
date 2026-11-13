@@ -2,8 +2,8 @@
 
 CycleScope is a modular monolith packaged under `src/cyclescope`.
 
-- `domain` contains framework-independent master-data and market-data entities, value objects, validation exceptions, and repository contracts.
-- `application` contains exposure validation, market-data import/retrieval use cases, typed DTOs, and provider ports.
+- `domain` contains framework-independent company, security, exchange, identifier, listing, exposure, and market-data entities, value objects, validation exceptions, and repository contracts.
+- `application` contains typed company/security/exchange/listing/identifier/exposure use cases, shared exposure validation, market-data import/retrieval use cases, DTOs, and provider ports.
 - `infrastructure/config` loads validated Pydantic Settings. `infrastructure/logging` configures standard-library console and rotating-file handlers.
 - `infrastructure/database` contains SQLAlchemy mappings, engine/session setup, Alembic migrations, and master-data and market-data repository adapters.
 - `infrastructure/market_data` contains input adapters, including the CSV adapter. Providers implement Application acquisition ports and map their source data into common DTOs without changing domain entities or use cases.
@@ -12,6 +12,8 @@ CycleScope is a modular monolith packaged under `src/cyclescope`.
 Dependencies point inward: adapters depend on domain contracts, while domain types do not import database, UI, data-frame, or provider libraries. Session and engine factories are passed explicitly. Repository contracts use concrete domain entity types, and adapters explicitly map between SQLAlchemy rows and those entities. ORM models and persistence mappings stay inside Infrastructure.
 
 Company industry revenue shares are individually constrained to `[0, 1]` in the database and domain. The application validates aggregate shares across all time-overlapping exposures for one company, requiring their total to be at most `1` on every date. This cross-row rule is not expressed as a database constraint because arbitrary time intervals cannot be safely enforced by a simple row check.
+
+Company is the issuer; Security is the tradable instrument/share class. Exchange is a stable venue reference identified by a unique exchange code. Security identifiers are typed text records with optional exchange scope and validity dates; overlapping reuse is rejected in Application. Listing records associate securities with venues, exchange tickers, currencies, and listing dates. Status transitions are stored as append-only listing status events, while the listing keeps its current status. The old ticker/exchange columns on Security remain for existing contracts; new listing relationships use the Exchange foreign key.
 
 SQLite is the initial local store. SQLAlchemy types and Alembic migrations keep the schema portable to PostgreSQL, subject to normal migration review.
 

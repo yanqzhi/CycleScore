@@ -1,10 +1,10 @@
 # CycleScope
 
-CycleScope is an independent Python application for cyclical-stock intelligence. It includes master-data persistence and provider-independent infrastructure for importing and retrieving daily OHLCV prices and FX rates. Live provider integrations and analytical engines are not implemented.
+CycleScope is an independent Python application for cyclical-stock intelligence. It includes a multi-market issuer, security, exchange, identifier, and listing master, company industry exposures, and provider-independent infrastructure for importing and retrieving daily OHLCV prices and FX rates. Live provider integrations and analytical engines are not implemented.
 
 ## Architecture
 
-The package uses a modular monolith. Domain types and repository contracts stay independent of SQLAlchemy; Application use cases depend on typed acquisition and repository ports; Infrastructure contains SQLAlchemy mappings, SQLite setup, repositories, configuration, logging, and input adapters. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The package uses a modular monolith. Domain types and repository contracts stay independent of SQLAlchemy; Application use cases depend on typed acquisition and repository ports; Infrastructure contains SQLAlchemy mappings, SQLite setup, repositories, configuration, logging, and input adapters. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/MASTER_DATA_SPEC.md](docs/MASTER_DATA_SPEC.md).
 
 ## Prerequisites and installation
 

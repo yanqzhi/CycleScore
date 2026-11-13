@@ -9,22 +9,37 @@ from sqlalchemy.orm import DeclarativeBase, Session
 
 from cyclescope.domain.entities import (
     Company,
+    CompanyIndustryExposure,
     DataSource,
+    Exchange,
     Industry,
+    Listing,
+    ListingStatusEvent,
     Security,
+    SecurityIdentifier,
     SubIndustry,
 )
 from cyclescope.domain.repositories.contracts import (
+    CompanyIndustryExposureRepository,
     CompanyRepository,
     DataSourceRepository,
+    ExchangeRepository,
     IndustryRepository,
+    ListingRepository,
+    ListingStatusEventRepository,
+    SecurityIdentifierRepository,
     SecurityRepository,
     SubIndustryRepository,
 )
 from cyclescope.infrastructure.database.models import (
+    CompanyIndustryExposureModel,
     CompanyModel,
     DataSourceModel,
+    ExchangeModel,
     IndustryModel,
+    ListingModel,
+    ListingStatusEventModel,
+    SecurityIdentifierModel,
     SecurityModel,
     SubIndustryModel,
 )
@@ -43,15 +58,15 @@ class SqlAlchemyRepository[M: DeclarativeBase, EntityT]:
         self._model = model
         self._entity_factory = entity_factory
 
-    @staticmethod
     def _entity_values(
-        entity: EntityT, *, include_none: bool = False
+        self, entity: EntityT, *, include_none: bool = False
     ) -> dict[str, object]:
         """Build constructor values from dataclass fields inside Infrastructure."""
         return {
             field.name: getattr(entity, field.name)
             for field in fields(entity)  # type: ignore[arg-type]
             if field.name not in {"id", "created_at", "updated_at"}
+            and hasattr(self._model, field.name)
             and (include_none or getattr(entity, field.name) is not None)
         }
 
@@ -221,3 +236,199 @@ class DataSourceSqlAlchemyRepository(
                 updated_at=self._utc(row.updated_at),
             ),
         )
+
+
+class ExchangeSqlAlchemyRepository(
+    SqlAlchemyRepository[ExchangeModel, Exchange], ExchangeRepository
+):
+    """Exchange repository adapter."""
+
+    def __init__(self, session: Session) -> None:
+        super().__init__(
+            session,
+            ExchangeModel,
+            lambda row: Exchange(
+                exchange_id=row.id,
+                exchange_code=row.exchange_code,
+                exchange_name=row.exchange_name,
+                country_code=row.country_code,
+                market_region=row.market_region,
+                timezone=row.timezone,
+                currency_code=row.currency_code,
+                is_active=row.is_active,
+                created_at=self._utc(row.created_at),
+                updated_at=self._utc(row.updated_at),
+            ),
+        )
+
+
+class SecurityIdentifierSqlAlchemyRepository(
+    SqlAlchemyRepository[SecurityIdentifierModel, SecurityIdentifier],
+    SecurityIdentifierRepository,
+):
+    """Security identifier repository adapter."""
+
+    def __init__(self, session: Session) -> None:
+        super().__init__(
+            session,
+            SecurityIdentifierModel,
+            lambda row: SecurityIdentifier(
+                id=row.id,
+                security_id=row.security_id,
+                identifier_type=row.identifier_type,
+                identifier_value=row.identifier_value,
+                exchange_id=row.exchange_id,
+                valid_from=row.valid_from,
+                valid_to=row.valid_to,
+                created_at=self._utc(row.created_at),
+                updated_at=self._utc(row.updated_at),
+            ),
+        )
+
+    def list_by_security(self, security_id: int) -> list[SecurityIdentifier]:
+        rows = self._session.scalars(
+            select(SecurityIdentifierModel)
+            .where(SecurityIdentifierModel.security_id == security_id)
+            .order_by(SecurityIdentifierModel.valid_from, SecurityIdentifierModel.id)
+        )
+        return [self._to_entity(row) for row in rows]
+
+    def list_by_identifier(
+        self, identifier_type: str, identifier_value: str, exchange_id: int | None
+    ) -> list[SecurityIdentifier]:
+        statement = select(SecurityIdentifierModel).where(
+            SecurityIdentifierModel.identifier_type == identifier_type,
+            SecurityIdentifierModel.identifier_value == identifier_value,
+        )
+        if exchange_id is None:
+            statement = statement.where(SecurityIdentifierModel.exchange_id.is_(None))
+        else:
+            statement = statement.where(
+                SecurityIdentifierModel.exchange_id == exchange_id
+            )
+        rows = self._session.scalars(statement)
+        return [self._to_entity(row) for row in rows]
+
+
+class ListingSqlAlchemyRepository(
+    SqlAlchemyRepository[ListingModel, Listing], ListingRepository
+):
+    """Listing history repository adapter."""
+
+    def __init__(self, session: Session) -> None:
+        super().__init__(
+            session,
+            ListingModel,
+            lambda row: Listing(
+                id=row.id,
+                security_id=row.security_id,
+                exchange_id=row.exchange_id,
+                ticker=row.ticker,
+                trading_currency=row.trading_currency,
+                listing_date=row.listing_date,
+                delisting_date=row.delisting_date,
+                status=row.status,
+                created_at=self._utc(row.created_at),
+                updated_at=self._utc(row.updated_at),
+            ),
+        )
+
+    def list_by_security(self, security_id: int) -> list[Listing]:
+        rows = self._session.scalars(
+            select(ListingModel)
+            .where(ListingModel.security_id == security_id)
+            .order_by(ListingModel.listing_date, ListingModel.id)
+        )
+        return [self._to_entity(row) for row in rows]
+
+    def list_by_exchange_ticker(self, exchange_id: int, ticker: str) -> list[Listing]:
+        rows = self._session.scalars(
+            select(ListingModel).where(
+                ListingModel.exchange_id == exchange_id,
+                ListingModel.ticker == ticker,
+            )
+        )
+        return [self._to_entity(row) for row in rows]
+
+
+class CompanyIndustryExposureSqlAlchemyRepository(
+    SqlAlchemyRepository[CompanyIndustryExposureModel, CompanyIndustryExposure],
+    CompanyIndustryExposureRepository,
+):
+    """Company industry exposure repository adapter."""
+
+    def __init__(self, session: Session) -> None:
+        super().__init__(
+            session,
+            CompanyIndustryExposureModel,
+            lambda row: CompanyIndustryExposure(
+                id=row.id,
+                company_id=row.company_id,
+                sub_industry_id=row.sub_industry_id,
+                revenue_share=row.revenue_share,
+                valid_from=row.valid_from,
+                valid_to=row.valid_to,
+                source_id=row.source_id,
+                created_at=self._utc(row.created_at),
+                updated_at=self._utc(row.updated_at),
+            ),
+        )
+
+    def list_by_company(self, company_id: int) -> list[CompanyIndustryExposure]:
+        rows = self._session.scalars(
+            select(CompanyIndustryExposureModel)
+            .where(CompanyIndustryExposureModel.company_id == company_id)
+            .order_by(
+                CompanyIndustryExposureModel.valid_from, CompanyIndustryExposureModel.id
+            )
+        )
+        return [self._to_entity(row) for row in rows]
+
+
+class ListingStatusEventSqlAlchemyRepository(ListingStatusEventRepository):
+    """Append-only listing status event adapter."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def create(self, event: ListingStatusEvent) -> ListingStatusEvent:
+        row = ListingStatusEventModel(
+            listing_id=event.listing_id,
+            status=event.status,
+            effective_date=event.effective_date,
+        )
+        self._session.add(row)
+        self._session.flush()
+        created_at = row.created_at
+        return ListingStatusEvent(
+            id=row.id,
+            listing_id=row.listing_id,
+            status=row.status,
+            effective_date=row.effective_date,
+            created_at=(
+                created_at.replace(tzinfo=UTC)
+                if created_at.tzinfo is None
+                else created_at.astimezone(UTC)
+            ),
+        )
+
+    def list_by_listing(self, listing_id: int) -> list[ListingStatusEvent]:
+        rows = self._session.scalars(
+            select(ListingStatusEventModel)
+            .where(ListingStatusEventModel.listing_id == listing_id)
+            .order_by(ListingStatusEventModel.effective_date)
+        )
+        return [
+            ListingStatusEvent(
+                id=row.id,
+                listing_id=row.listing_id,
+                status=row.status,
+                effective_date=row.effective_date,
+                created_at=(
+                    row.created_at.replace(tzinfo=UTC)
+                    if row.created_at.tzinfo is None
+                    else row.created_at.astimezone(UTC)
+                ),
+            )
+            for row in rows
+        ]

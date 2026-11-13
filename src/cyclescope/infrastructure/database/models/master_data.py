@@ -12,6 +12,7 @@ from sqlalchemy import (
     Numeric,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -68,6 +69,20 @@ class CompanyModel(TimestampMixin, Base):
     )
 
 
+class ExchangeModel(TimestampMixin, Base):
+    """Stable exchange and market reference data."""
+
+    __tablename__ = "exchanges"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    exchange_code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    exchange_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    market_region: Mapped[str] = mapped_column(String(40), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    currency_code: Mapped[str] = mapped_column(String(3), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
 class SecurityModel(TimestampMixin, Base):
     """Tradable security listing."""
 
@@ -88,6 +103,114 @@ class SecurityModel(TimestampMixin, Base):
     delisting_date: Mapped[date | None] = mapped_column(Date)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     company: Mapped[CompanyModel] = relationship(back_populates="securities")
+
+
+class SecurityIdentifierModel(TimestampMixin, Base):
+    """Typed historical identifiers, stored as text."""
+
+    __tablename__ = "security_identifiers"
+    __table_args__ = (
+        Index("ix_security_identifiers_security_id", "security_id"),
+        Index(
+            "ix_security_identifiers_scope",
+            "identifier_type",
+            "identifier_value",
+            "exchange_id",
+        ),
+        CheckConstraint(
+            "valid_to IS NULL OR valid_to >= valid_from",
+            name="identifier_validity_range",
+        ),
+        Index(
+            "uq_security_identifier_global_start",
+            "identifier_type",
+            "identifier_value",
+            "valid_from",
+            unique=True,
+            sqlite_where=text("exchange_id IS NULL"),
+            postgresql_where=text("exchange_id IS NULL"),
+        ),
+        Index(
+            "uq_security_identifier_exchange_start",
+            "identifier_type",
+            "identifier_value",
+            "exchange_id",
+            "valid_from",
+            unique=True,
+            sqlite_where=text("exchange_id IS NOT NULL"),
+            postgresql_where=text("exchange_id IS NOT NULL"),
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    security_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.id", ondelete="RESTRICT"), nullable=False
+    )
+    identifier_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    identifier_value: Mapped[str] = mapped_column(String(120), nullable=False)
+    exchange_id: Mapped[int | None] = mapped_column(
+        ForeignKey("exchanges.id", ondelete="RESTRICT")
+    )
+    valid_from: Mapped[date] = mapped_column(Date, nullable=False)
+    valid_to: Mapped[date | None] = mapped_column(Date)
+
+
+class ListingModel(TimestampMixin, Base):
+    """Exchange-specific listing lifecycle history."""
+
+    __tablename__ = "listings"
+    __table_args__ = (
+        Index("ix_listings_security_id", "security_id"),
+        Index("ix_listings_exchange_ticker", "exchange_id", "ticker"),
+        UniqueConstraint(
+            "exchange_id",
+            "ticker",
+            "listing_date",
+            name="uq_listing_exchange_ticker_start",
+        ),
+        CheckConstraint(
+            "delisting_date IS NULL OR delisting_date >= listing_date",
+            name="listing_date_range",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'suspended', 'delisted')", name="listing_status"
+        ),
+        CheckConstraint(
+            "(status = 'delisted' AND delisting_date IS NOT NULL) OR "
+            "(status != 'delisted' AND delisting_date IS NULL)",
+            name="listing_status_date",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    security_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.id", ondelete="RESTRICT"), nullable=False
+    )
+    exchange_id: Mapped[int] = mapped_column(
+        ForeignKey("exchanges.id", ondelete="RESTRICT"), nullable=False
+    )
+    ticker: Mapped[str] = mapped_column(String(32), nullable=False)
+    trading_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    listing_date: Mapped[date] = mapped_column(Date, nullable=False)
+    delisting_date: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+
+
+class ListingStatusEventModel(TimestampMixin, Base):
+    """Append-only status transition timeline for a listing."""
+
+    __tablename__ = "listing_status_events"
+    __table_args__ = (
+        UniqueConstraint("listing_id", "effective_date", name="uq_listing_event_date"),
+        Index("ix_listing_status_events_listing_id", "listing_id"),
+        CheckConstraint(
+            "status IN ('active', 'suspended', 'delisted')", name="status_event_status"
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("listings.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
 
 
 class DataSourceModel(TimestampMixin, Base):

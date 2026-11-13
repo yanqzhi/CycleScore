@@ -10,7 +10,12 @@ from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from cyclescope.infrastructure.database.models import DailyPriceModel, IndustryModel
+from cyclescope.infrastructure.database.models import (
+    CompanyModel,
+    DailyPriceModel,
+    IndustryModel,
+    SecurityModel,
+)
 from cyclescope.infrastructure.database.session import create_database_engine
 
 
@@ -26,13 +31,38 @@ def test_market_data_migration_preserves_master_data_and_enforces_foreign_keys(
     with Session(baseline_engine) as session:
         session.add(IndustryModel(code="KEEP", name="Existing record"))
         session.commit()
+    command.upgrade(config, "0002_market_data")
+    with Session(baseline_engine) as session:
+        company = CompanyModel(name="Legacy issuer", country_code="JP")
+        session.add(company)
+        session.flush()
+        session.add(
+            SecurityModel(
+                company_id=company.id,
+                ticker="1234",
+                exchange="XTKS",
+                currency="JPY",
+                security_type="common_stock",
+                is_active=True,
+            )
+        )
+        session.commit()
     command.upgrade(config, "head")
 
     engine = create_database_engine(f"sqlite:///{database_path}")
-    assert {"daily_prices", "fx_rates"}.issubset(set(inspect(engine).get_table_names()))
+    assert {
+        "daily_prices",
+        "fx_rates",
+        "exchanges",
+        "security_identifiers",
+        "listings",
+        "listing_status_events",
+    }.issubset(set(inspect(engine).get_table_names()))
     with Session(engine) as session:
         existing = session.query(IndustryModel).filter_by(code="KEEP").one()
         assert existing.name == "Existing record"
+        legacy_security = session.query(SecurityModel).filter_by(ticker="1234").one()
+        assert legacy_security.exchange == "XTKS"
         session.add(
             DailyPriceModel(
                 security_id=999,
