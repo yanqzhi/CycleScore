@@ -31,6 +31,8 @@ __all__ = [
     "ExchangeModel",
     "DailyPriceModel",
     "FxRateModel",
+    "IngestionRunModel",
+    "RawDataRecordModel",
     "IndustryModel",
     "ListingModel",
     "ListingStatusEventModel",
@@ -43,3 +45,8 @@ __all__ = [
     "FinancialStatementItemModel",
     "FinancialStatementModel",
 ]
+
+from cyclescope.infrastructure.database.models.ingestion import (
+    IngestionRunModel,
+    RawDataRecordModel,
+)

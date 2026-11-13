@@ -24,3 +24,7 @@ Market-data use cases receive provider and repository implementations through co
 ### Financial statement foundation
 
 Application use cases accept common financial statement input DTOs and typed Domain entities. The Infrastructure repositories map these entities to SQLAlchemy rows. No source-specific document format or live provider is part of Sprint 04. Historical revisions are immutable; the caller owns the transaction, including rollback on any line persistence failure. See [FINANCIAL_DATA_SPEC.md](FINANCIAL_DATA_SPEC.md).
+
+### Generic ingestion foundation
+
+`ExecuteDataIngestionPipeline` coordinates acquisition, raw retention, transformation, validation, and an atomic/idempotent normalized persistence port. Domain owns `IngestionRun` and `RawDataRecord`; Application owns immutable request/batch DTOs and pipeline ports; Infrastructure supplies SQLAlchemy repositories and deterministic mock adapters. Failure results carry typed issues and terminal run status; the use case does not commit the caller's transaction. See [DATA_PIPELINE_SPEC.md](DATA_PIPELINE_SPEC.md).

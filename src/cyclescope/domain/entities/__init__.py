@@ -13,6 +13,7 @@ from cyclescope.domain.entities.financial_data import (
 )
 from cyclescope.domain.entities.fx_rate import FxRate
 from cyclescope.domain.entities.industry import Industry
+from cyclescope.domain.entities.ingestion import IngestionRun, RawDataRecord
 from cyclescope.domain.entities.listing import Listing
 from cyclescope.domain.entities.listing_status_event import ListingStatusEvent
 from cyclescope.domain.entities.security import Security
@@ -31,6 +32,8 @@ __all__ = [
     "FinancialStatement",
     "FinancialStatementItem",
     "Industry",
+    "IngestionRun",
+    "RawDataRecord",
     "Listing",
     "ListingStatusEvent",
     "Security",

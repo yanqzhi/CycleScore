@@ -16,6 +16,7 @@ from cyclescope.domain.entities.financial_data import (
     FinancialStatementItem,
 )
 from cyclescope.domain.entities.fx_rate import FxRate
+from cyclescope.domain.entities.ingestion import IngestionRun, RawDataRecord
 from cyclescope.domain.entities.listing import Listing
 from cyclescope.domain.entities.listing_status_event import ListingStatusEvent
 from cyclescope.domain.entities.security import Security
@@ -278,3 +279,28 @@ class FinancialItemMappingRepository(ABC):
         source_item_code: str,
         accounting_standard: str | None = None,
     ) -> FinancialItemMapping | None: ...
+
+
+class RawDataRecordRepository(ABC):
+    """Append-only raw acquisition storage contract."""
+
+    @abstractmethod
+    def create(self, record: RawDataRecord) -> RawDataRecord:
+        """Persist payload bytes and their verified checksum without mutation."""
+
+    @abstractmethod
+    def get_by_id(self, record_id: int) -> RawDataRecord | None:
+        """Retrieve the original immutable payload and provenance."""
+
+
+class IngestionRunRepository(ABC):
+    """Persistence contract for auditable ingestion lifecycle records."""
+
+    @abstractmethod
+    def create(self, run: IngestionRun) -> IngestionRun: ...
+
+    @abstractmethod
+    def update(self, run: IngestionRun) -> IngestionRun: ...
+
+    @abstractmethod
+    def get_by_id(self, run_id: int) -> IngestionRun | None: ...

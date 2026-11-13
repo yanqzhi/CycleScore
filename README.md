@@ -92,3 +92,7 @@ mypy src
 More workflow details are in [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md).
 
 CycleScore now includes a provider-neutral financial statement foundation for BS, PL, and CF data. It stores source-specific revisions with point-in-time availability, standardized item definitions, and source item mappings. See [Financial Data Specification](docs/FINANCIAL_DATA_SPEC.md). No live provider or analysis engine is included.
+
+## Generic ingestion pipeline
+
+Sprint 05 adds an acquisition-to-normalization orchestration boundary. Providers implement `DataSourceAdapter`; transformations and validation are injected Application protocols; SQLAlchemy raw/run repositories and mock adapters are Infrastructure-owned. The pipeline is not wired into existing market or financial imports yet. Integration adapters will connect their established typed DTOs and repositories in a follow-up without weakening domain-specific keys or revision rules. See [docs/DATA_PIPELINE_SPEC.md](docs/DATA_PIPELINE_SPEC.md).

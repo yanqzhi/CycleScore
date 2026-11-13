@@ -26,3 +26,5 @@ Market data was added by migration `0002_market_data`; multi-market reference da
 ## Financial data foundation
 
 Migration `0005_financial_data_foundation` adds provider-neutral statement, standardized item, statement line, and source mapping tables. Statements are append-only revisions partitioned by company, period, standard, consolidation scope, and source. `available_at` controls historical visibility; sources remain separate in every query. Financial line values use `NUMERIC(38, 12)` to support large issuer totals and fractional per-share/ratio-like observations without using binary floats; values outside this fixed precision must be rejected before persistence.
+
+Migration `0007_ingestion_pipeline` adds `raw_data_records` and `ingestion_runs`. Raw events have a surrogate key and non-unique checksum index: repeated identical acquisitions remain separate events. Normalized idempotency continues to use each dataset's natural keys and source-specific revision semantics. Run rows reference raw records with RESTRICT semantics and retain lifecycle status, timestamps, metrics, and errors. The Application boundary enforces the configurable payload byte limit.
