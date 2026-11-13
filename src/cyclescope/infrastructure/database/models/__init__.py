@@ -1,5 +1,11 @@
 """Database model declarations."""
 
+from cyclescope.infrastructure.database.models.financial_data import (
+    FinancialItemMappingModel,
+    FinancialItemModel,
+    FinancialStatementItemModel,
+    FinancialStatementModel,
+)
 from cyclescope.infrastructure.database.models.market_data import (
     DailyPriceModel,
     FxRateModel,
@@ -32,4 +38,8 @@ __all__ = [
     "SecurityModel",
     "SecurityIdentifierModel",
     "SubIndustryModel",
+    "FinancialItemMappingModel",
+    "FinancialItemModel",
+    "FinancialStatementItemModel",
+    "FinancialStatementModel",
 ]

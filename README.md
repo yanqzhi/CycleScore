@@ -90,3 +90,5 @@ mypy src
 ```
 
 More workflow details are in [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md).
+
+CycleScore now includes a provider-neutral financial statement foundation for BS, PL, and CF data. It stores source-specific revisions with point-in-time availability, standardized item definitions, and source item mappings. See [Financial Data Specification](docs/FINANCIAL_DATA_SPEC.md). No live provider or analysis engine is included.

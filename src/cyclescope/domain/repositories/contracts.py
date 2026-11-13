@@ -9,12 +9,23 @@ from cyclescope.domain.entities.company_industry_exposure import CompanyIndustry
 from cyclescope.domain.entities.daily_price import DailyPrice
 from cyclescope.domain.entities.data_source import DataSource
 from cyclescope.domain.entities.exchange import Exchange
+from cyclescope.domain.entities.financial_data import (
+    FinancialItem,
+    FinancialItemMapping,
+    FinancialStatement,
+    FinancialStatementItem,
+)
 from cyclescope.domain.entities.fx_rate import FxRate
 from cyclescope.domain.entities.listing import Listing
 from cyclescope.domain.entities.listing_status_event import ListingStatusEvent
 from cyclescope.domain.entities.security import Security
 from cyclescope.domain.entities.security_identifier import SecurityIdentifier
 from cyclescope.domain.entities.sub_industry import SubIndustry
+from cyclescope.domain.value_objects.financial_data import (
+    ConsolidationScope,
+    FiscalPeriod,
+    StatementType,
+)
 from cyclescope.domain.value_objects.market_data import CurrencyPair, MarketDataPeriod
 from cyclescope.domain.value_objects.security_identifier import (
     IdentifierUniquenessScope,
@@ -196,3 +207,74 @@ class FxRateRepository(ABC):
         self, pair: CurrencyPair, observation_date: date, source_id: int
     ) -> list[FxRate]:
         """Return every stored revision for one source/date in revision order."""
+
+
+class FinancialStatementRepository(ABC):
+    """Append-only statements with source-specific as-of revisions."""
+
+    @abstractmethod
+    def create(self, entity: FinancialStatement) -> FinancialStatement: ...
+    @abstractmethod
+    def get_by_id(self, entity_id: int) -> FinancialStatement | None: ...
+    @abstractmethod
+    def list_by_company(self, company_id: int) -> list[FinancialStatement]: ...
+    @abstractmethod
+    def get_available_as_of(
+        self,
+        company_id: int,
+        as_of: datetime,
+        *,
+        statement_type: StatementType | None = None,
+        source_id: int | None = None,
+    ) -> list[FinancialStatement]: ...
+    @abstractmethod
+    def get_revisions(
+        self,
+        company_id: int,
+        source_id: int,
+        statement_type: StatementType,
+        period_start: date | None,
+        period_end: date,
+        accounting_standard: str,
+        consolidation_scope: ConsolidationScope,
+        fiscal_year: int,
+        fiscal_period: FiscalPeriod,
+    ) -> list[FinancialStatement]: ...
+    @abstractmethod
+    def exists_revision(self, entity: FinancialStatement) -> bool: ...
+
+
+class FinancialItemRepository(ABC):
+    @abstractmethod
+    def create(self, entity: FinancialItem) -> FinancialItem: ...
+    @abstractmethod
+    def get_by_id(self, entity_id: int) -> FinancialItem | None: ...
+    @abstractmethod
+    def get_by_code(self, item_code: str) -> FinancialItem | None: ...
+    @abstractmethod
+    def list_by_statement_type(
+        self, statement_type: StatementType
+    ) -> list[FinancialItem]: ...
+
+
+class FinancialStatementItemRepository(ABC):
+    @abstractmethod
+    def create(self, entity: FinancialStatementItem) -> FinancialStatementItem: ...
+    @abstractmethod
+    def list_by_statement(self, statement_id: int) -> list[FinancialStatementItem]: ...
+
+
+class FinancialItemMappingRepository(ABC):
+    @abstractmethod
+    def create(self, entity: FinancialItemMapping) -> FinancialItemMapping: ...
+    @abstractmethod
+    def exists_mapping(
+        self, source_id: int, source_item_code: str, accounting_standard: str | None
+    ) -> bool: ...
+    @abstractmethod
+    def resolve_source_item(
+        self,
+        source_id: int,
+        source_item_code: str,
+        accounting_standard: str | None = None,
+    ) -> FinancialItemMapping | None: ...

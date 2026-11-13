@@ -5,6 +5,12 @@ from cyclescope.domain.entities.company_industry_exposure import CompanyIndustry
 from cyclescope.domain.entities.daily_price import DailyPrice
 from cyclescope.domain.entities.data_source import DataSource
 from cyclescope.domain.entities.exchange import Exchange
+from cyclescope.domain.entities.financial_data import (
+    FinancialItem,
+    FinancialItemMapping,
+    FinancialStatement,
+    FinancialStatementItem,
+)
 from cyclescope.domain.entities.fx_rate import FxRate
 from cyclescope.domain.entities.industry import Industry
 from cyclescope.domain.entities.listing import Listing
@@ -20,6 +26,10 @@ __all__ = [
     "DataSource",
     "Exchange",
     "FxRate",
+    "FinancialItem",
+    "FinancialItemMapping",
+    "FinancialStatement",
+    "FinancialStatementItem",
     "Industry",
     "Listing",
     "ListingStatusEvent",

@@ -22,4 +22,15 @@ __all__ = [
     "SecuritySqlAlchemyRepository",
     "SQLAlchemyDailyPriceRepository",
     "SQLAlchemyFxRateRepository",
+    "SQLAlchemyFinancialItemMappingRepository",
+    "SQLAlchemyFinancialItemRepository",
+    "SQLAlchemyFinancialStatementItemRepository",
+    "SQLAlchemyFinancialStatementRepository",
 ]
+
+from cyclescope.infrastructure.database.repositories.financial_data import (
+    SQLAlchemyFinancialItemMappingRepository,
+    SQLAlchemyFinancialItemRepository,
+    SQLAlchemyFinancialStatementItemRepository,
+    SQLAlchemyFinancialStatementRepository,
+)
