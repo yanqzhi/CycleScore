@@ -1,9 +1,15 @@
 """CSV market-data provider parsing tests."""
 
+import inspect
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
+from typing import get_type_hints
 
 import pytest
 
+from cyclescope.application.dto.market_data import FxRateRequest, HistoricalPriceRequest
+from cyclescope.application.interfaces.market_data import HistoricalPriceProvider
 from cyclescope.infrastructure.market_data.csv_provider import (
     CsvFormatError,
     CsvHistoricalMarketDataProvider,
@@ -22,14 +28,24 @@ def test_csv_price_and_fx_records_are_parsed(tmp_path: Path) -> None:
         "base_currency,quote_currency,date,rate\nUSD,JPY,2024-01-02,145.2\n",
         encoding="utf-8",
     )
-    provider = CsvHistoricalMarketDataProvider()
-    price_rows = provider.read_prices(price_file)
-    fx_rows = provider.read_fx_rates(fx_file)
+    provider = CsvHistoricalMarketDataProvider(price_file, fx_file)
+    price_rows = provider.fetch_historical_prices(HistoricalPriceRequest(1, "USD"))
+    fx_rows = provider.fetch_fx_rates(FxRateRequest())
     assert price_rows[0].row_number == 2
-    assert price_rows[0].adjusted_close == "10.5"
-    assert price_rows[0].publication_date == "2024-01-03"
+    assert price_rows[0].adjusted_close == Decimal("10.5")
+    assert price_rows[0].observation_date == date(2024, 1, 2)
+    assert price_rows[0].publication_date == date(2024, 1, 3)
     assert fx_rows[0].base_currency == "USD"
-    assert fx_rows[0].rate == "145.2"
+    assert fx_rows[0].rate == Decimal("145.2")
+
+
+def test_application_provider_contract_is_path_and_csv_independent() -> None:
+    signature = inspect.signature(HistoricalPriceProvider.fetch_historical_prices)
+    assert "file_path" not in signature.parameters
+    assert (
+        Path
+        not in get_type_hints(HistoricalPriceProvider.fetch_historical_prices).values()
+    )
 
 
 @pytest.mark.parametrize(
@@ -45,9 +61,9 @@ def test_csv_provider_rejects_missing_headers(
 ) -> None:
     file_path = tmp_path / "bad.csv"
     file_path.write_text(content, encoding="utf-8")
-    provider = CsvHistoricalMarketDataProvider()
+    provider = CsvHistoricalMarketDataProvider(file_path, file_path)
     with pytest.raises(CsvFormatError):
         if method == "price":
-            provider.read_prices(file_path)
+            provider.fetch_historical_prices(HistoricalPriceRequest(1, "USD"))
         else:
-            provider.read_fx_rates(file_path)
+            provider.fetch_fx_rates(FxRateRequest())

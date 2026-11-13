@@ -1,47 +1,67 @@
-"""Typed application inputs, provider records, and import summaries."""
+"""Provider-independent market-data requests and transfer objects."""
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from pathlib import Path
+from decimal import Decimal
 
 from cyclescope.domain.entities.daily_price import DailyPrice
 from cyclescope.domain.entities.fx_rate import FxRate
 
 
 @dataclass(frozen=True, slots=True)
-class CsvPriceRecord:
-    """Unnormalized values read from one CSV price row."""
+class HistoricalPriceRequest:
+    """Request daily prices for a security and optional date range."""
 
-    row_number: int
-    observation_date: str | None
-    open: str | None
-    high: str | None
-    low: str | None
-    close: str | None
-    volume: str | None
-    adjusted_close: str | None = None
-    publication_date: str | None = None
+    security_id: int
+    currency: str
+    start_date: date | None = None
+    end_date: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class CsvFxRateRecord:
-    """Unnormalized values read from one CSV FX row."""
+class FxRateRequest:
+    """Request observations for an FX pair and optional date range."""
+
+    base_currency: str | None = None
+    quote_currency: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RawDailyPriceRecord:
+    """Normalized provider-neutral values from one daily price observation."""
+
+    row_number: int
+    observation_date: date | None
+    open: Decimal | None
+    high: Decimal | None
+    low: Decimal | None
+    close: Decimal | None
+    volume: int | None
+    adjusted_close: Decimal | None = None
+    publication_date: date | None = None
+    parsing_errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RawFxRateRecord:
+    """Normalized provider-neutral values from one FX observation."""
 
     row_number: int
     base_currency: str | None
     quote_currency: str | None
-    observation_date: str | None
-    rate: str | None
-    publication_date: str | None = None
+    observation_date: date | None
+    rate: Decimal | None
+    publication_date: date | None = None
+    parsing_errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class ImportHistoricalPricesInput:
-    """CSV and provenance metadata for importing one security's prices."""
+    """Price import request and provenance metadata."""
 
-    file_path: Path
-    security_id: int
-    currency: str
+    request: HistoricalPriceRequest
     source_id: int
     available_at: datetime
     collected_at: datetime
@@ -50,9 +70,9 @@ class ImportHistoricalPricesInput:
 
 @dataclass(frozen=True, slots=True)
 class ImportFxRatesInput:
-    """CSV and provenance metadata for importing FX revisions."""
+    """FX import request and provenance metadata."""
 
-    file_path: Path
+    request: FxRateRequest
     source_id: int
     available_at: datetime
     collected_at: datetime

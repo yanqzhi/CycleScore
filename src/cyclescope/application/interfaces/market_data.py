@@ -1,24 +1,30 @@
-"""Provider ports for normalized, provider-independent CSV rows."""
+"""Provider-independent acquisition ports."""
 
-from pathlib import Path
 from typing import Protocol
 
-from cyclescope.application.dto.market_data import CsvFxRateRecord, CsvPriceRecord
+from cyclescope.application.dto.market_data import (
+    FxRateRequest,
+    HistoricalPriceRequest,
+    RawDailyPriceRecord,
+    RawFxRateRecord,
+)
 
 
 class HistoricalPriceProvider(Protocol):
-    """Read daily OHLCV records from a provider-specific source."""
+    """Acquire normalized daily price records for a market-data request."""
 
-    def read_prices(self, file_path: Path) -> tuple[CsvPriceRecord, ...]:
-        """Return raw typed rows; application use cases normalize and validate."""
+    def fetch_historical_prices(
+        self, request: HistoricalPriceRequest
+    ) -> tuple[RawDailyPriceRecord, ...]:
+        """Return common records; provider-specific parsing stays in its adapter."""
 
 
 class FxRateProvider(Protocol):
-    """Read FX observations from a provider-specific source."""
+    """Acquire normalized FX records for a market-data request."""
 
-    def read_fx_rates(self, file_path: Path) -> tuple[CsvFxRateRecord, ...]:
-        """Return raw typed rows; application use cases normalize and validate."""
+    def fetch_fx_rates(self, request: FxRateRequest) -> tuple[RawFxRateRecord, ...]:
+        """Return common records; provider-specific parsing stays in its adapter."""
 
 
 class MarketDataProvider(HistoricalPriceProvider, FxRateProvider, Protocol):
-    """Combined market-data provider boundary for providers offering both feeds."""
+    """Combined provider boundary for adapters offering both feeds."""

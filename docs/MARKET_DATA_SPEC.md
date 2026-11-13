@@ -22,7 +22,9 @@ The repository returns the highest eligible revision per observation date and so
 
 ## Provider boundary
 
-Application defines `HistoricalPriceProvider` and `FxRateProvider` protocols over typed raw-row DTOs. `CsvHistoricalMarketDataProvider` implements them without pandas or external APIs. A future IBKR adapter belongs under Infrastructure and should translate IBKR responses into these same raw DTOs; Domain and Application must remain provider-neutral.
+Application defines `HistoricalPriceProvider.fetch_historical_prices(HistoricalPriceRequest)` and `FxRateProvider.fetch_fx_rates(FxRateRequest)`. Both return shared `RawDailyPriceRecord` / `RawFxRateRecord` DTOs containing typed `date`, `Decimal`, `int`, and `str` values plus row-level parsing errors. The request DTOs describe security/currency and optional date bounds; neither requests nor provider protocols contain file paths.
+
+`CsvHistoricalMarketDataProvider` is an Infrastructure input adapter configured with CSV paths. It reads the documented CSV format, parses cells, and returns common DTOs. It does not own business validation. Application use cases apply the same Domain validation, duplicate detection, revision/provenance handling, and repository persistence regardless of provider. A future IBKR adapter can acquire data from its API and map the response to the same common DTOs; it will not need to implement CSV behavior. Live IBKR connectivity is not included.
 
 ## CSV format
 
@@ -46,10 +48,10 @@ Optional FX column: `publication_date`. The file reader accepts UTF-8 (with or w
 
 ## Validation and import summaries
 
-Each row is normalized and validated before persistence. Missing required cells, invalid dates or numbers, invalid currency codes, negative volume, invalid OHLC relationships, invalid FX pairs/rates, and domain validation failures are returned as `ValidationIssue(row_number, message)` entries. An invalid header is a file-level `CsvFormatError`. A valid row with an already stored revision key is reported as skipped duplicate.
+CSV syntax and primitive conversion happens in the CSV adapter. Parse failures are carried with their source row in the common DTO and surfaced as `ValidationIssue(row_number, message)`. Shared Application/Domain validation handles missing required values, invalid currency codes, negative volume, invalid OHLC relationships, invalid FX pairs/rates, and domain validation failures. An invalid header is a file-level `CsvFormatError`. A valid row with an already stored revision key is reported as skipped duplicate.
 
 `PriceImportSummary` and `FxImportSummary` include total, imported, duplicate, rejected counts, validation errors, and imported domain observations. The use cases flush inserts through repository ports but do not commit a transaction; the caller owns transaction scope and can roll back the batch.
 
 ## Current limitations
 
-The CSV import is invoked from Python use cases; there is no ingestion CLI, scheduling, live provider, corporate-action adjustment, exchange calendar, or source-priority configuration. When no source is requested, source choice follows the deterministic rule above and may not match a future business preference. Imported revision numbering and `available_at` are trusted metadata supplied by the caller.
+The CSV adapter is invoked from Python application wiring; there is no ingestion CLI, scheduling, live provider, corporate-action adjustment, exchange calendar, or source-priority configuration. When no source is requested, source choice follows the deterministic rule above and may not match a future business preference. Imported revision numbering and `available_at` are trusted metadata supplied by the caller.

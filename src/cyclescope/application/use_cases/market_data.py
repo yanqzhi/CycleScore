@@ -1,8 +1,6 @@
 """Import and point-in-time retrieval use cases for market data."""
 
-import re
 from datetime import UTC, date, datetime
-from decimal import Decimal, InvalidOperation
 
 from cyclescope.application.dto.market_data import (
     FxImportSummary,
@@ -24,28 +22,6 @@ from cyclescope.domain.repositories.contracts import (
 )
 from cyclescope.domain.value_objects.market_data import CurrencyPair, MarketDataPeriod
 
-_INTEGER_PATTERN = re.compile(r"^[0-9]+$")
-
-
-def _decimal(value: str | None, field_name: str) -> Decimal:
-    if value is None:
-        raise ValueError(f"{field_name} is required.")
-    try:
-        return Decimal(value)
-    except InvalidOperation as error:
-        raise ValueError(f"{field_name} must be a decimal number.") from error
-
-
-def _date(value: str | None, field_name: str, *, optional: bool = False) -> date | None:
-    if value is None:
-        if optional:
-            return None
-        raise ValueError(f"{field_name} is required.")
-    try:
-        return date.fromisoformat(value)
-    except ValueError as error:
-        raise ValueError(f"{field_name} must use YYYY-MM-DD format.") from error
-
 
 def _validate_import_metadata(
     source_id: int, available_at: datetime, collected_at: datetime, revision_number: int
@@ -60,7 +36,7 @@ def _validate_import_metadata(
 
 
 class ImportHistoricalPrices:
-    """Normalize, validate, deduplicate, and save CSV price observations."""
+    """Validate, deduplicate, and save normalized provider price observations."""
 
     def __init__(
         self,
@@ -72,7 +48,7 @@ class ImportHistoricalPrices:
 
     def execute(self, request: ImportHistoricalPricesInput) -> PriceImportSummary:
         """Import rows and return accepted, duplicate, and rejected counts."""
-        if request.security_id < 1:
+        if request.request.security_id < 1:
             raise ValueError("security_id must be positive.")
         available_at, collected_at = _validate_import_metadata(
             request.source_id,
@@ -80,40 +56,48 @@ class ImportHistoricalPrices:
             request.collected_at,
             request.revision_number,
         )
-        currency = request.currency.strip().upper()
-        rows = self._provider.read_prices(request.file_path)
+        currency = request.request.currency.strip().upper()
+        rows = self._provider.fetch_historical_prices(request.request)
         errors: list[ValidationIssue] = []
         accepted: list[DailyPrice] = []
         duplicate_count = 0
         for row in rows:
             try:
-                observation_date = _date(row.observation_date, "date")
-                assert observation_date is not None
-                open_price = _decimal(row.open, "open")
-                high_price = _decimal(row.high, "high")
-                low_price = _decimal(row.low, "low")
-                close_price = _decimal(row.close, "close")
-                if row.volume is None or not _INTEGER_PATTERN.fullmatch(row.volume):
+                if row.parsing_errors:
+                    errors.append(
+                        ValidationIssue(row.row_number, "; ".join(row.parsing_errors))
+                    )
+                    continue
+                observation_date = row.observation_date
+                if observation_date is None:
+                    raise ValueError("date is required.")
+                open_price, high_price, low_price, close_price = (
+                    row.open,
+                    row.high,
+                    row.low,
+                    row.close,
+                )
+                if None in (open_price, high_price, low_price, close_price):
+                    raise ValueError("open, high, low, and close are required.")
+                assert open_price is not None
+                assert high_price is not None
+                assert low_price is not None
+                assert close_price is not None
+                if row.volume is None or row.volume < 0:
                     raise ValueError("volume must be a non-negative whole number.")
                 now = datetime.now(UTC)
                 price = DailyPrice(
-                    security_id=request.security_id,
+                    security_id=request.request.security_id,
                     observation_date=observation_date,
                     open=open_price,
                     high=high_price,
                     low=low_price,
                     close=close_price,
-                    adjusted_close=(
-                        _decimal(row.adjusted_close, "adjusted_close")
-                        if row.adjusted_close is not None
-                        else None
-                    ),
-                    volume=int(row.volume),
+                    adjusted_close=row.adjusted_close,
+                    volume=row.volume,
                     currency=currency,
                     source_id=request.source_id,
-                    publication_date=_date(
-                        row.publication_date, "publication_date", optional=True
-                    ),
+                    publication_date=row.publication_date,
                     available_at=available_at,
                     collected_at=collected_at,
                     revision_number=request.revision_number,
@@ -144,7 +128,7 @@ class ImportHistoricalPrices:
 
 
 class ImportFxRates:
-    """Normalize, validate, deduplicate, and save CSV FX observations."""
+    """Validate, deduplicate, and save normalized provider FX observations."""
 
     def __init__(self, provider: FxRateProvider, repository: FxRateRepository) -> None:
         self._provider = provider
@@ -158,29 +142,35 @@ class ImportFxRates:
             request.collected_at,
             request.revision_number,
         )
-        rows = self._provider.read_fx_rates(request.file_path)
+        rows = self._provider.fetch_fx_rates(request.request)
         errors: list[ValidationIssue] = []
         accepted: list[FxRate] = []
         duplicate_count = 0
         for row in rows:
             try:
+                if row.parsing_errors:
+                    errors.append(
+                        ValidationIssue(row.row_number, "; ".join(row.parsing_errors))
+                    )
+                    continue
                 if row.base_currency is None or row.quote_currency is None:
                     raise ValueError("base_currency and quote_currency are required.")
                 pair = CurrencyPair(
                     row.base_currency.strip().upper(),
                     row.quote_currency.strip().upper(),
                 )
-                observation_date = _date(row.observation_date, "date")
-                assert observation_date is not None
+                observation_date = row.observation_date
+                if observation_date is None:
+                    raise ValueError("date is required.")
+                if row.rate is None:
+                    raise ValueError("rate is required.")
                 rate = FxRate(
                     base_currency=pair.base_currency,
                     quote_currency=pair.quote_currency,
                     observation_date=observation_date,
-                    rate=_decimal(row.rate, "rate"),
+                    rate=row.rate,
                     source_id=request.source_id,
-                    publication_date=_date(
-                        row.publication_date, "publication_date", optional=True
-                    ),
+                    publication_date=row.publication_date,
                     available_at=available_at,
                     collected_at=collected_at,
                     revision_number=request.revision_number,

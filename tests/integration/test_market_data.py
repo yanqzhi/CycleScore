@@ -9,10 +9,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from cyclescope.application.dto.market_data import (
+    FxRateRequest,
     GetHistoricalFxRatesInput,
     GetHistoricalPricesInput,
+    HistoricalPriceRequest,
     ImportFxRatesInput,
     ImportHistoricalPricesInput,
+    RawDailyPriceRecord,
 )
 from cyclescope.application.use_cases.market_data import (
     GetHistoricalFxRates,
@@ -40,6 +43,34 @@ from cyclescope.infrastructure.market_data.csv_provider import (
 UTC_NOW = datetime(2024, 1, 5, 12, tzinfo=UTC)
 
 
+class MockPriceProvider:
+    """Supply already normalized records without a file or external service."""
+
+    def fetch_historical_prices(
+        self, request: HistoricalPriceRequest
+    ) -> tuple[RawDailyPriceRecord, ...]:
+        return (
+            RawDailyPriceRecord(
+                row_number=1,
+                observation_date=date(2024, 1, 2),
+                open=Decimal("10"),
+                high=Decimal("12"),
+                low=Decimal("9"),
+                close=Decimal("11"),
+                volume=100,
+            ),
+            RawDailyPriceRecord(
+                row_number=2,
+                observation_date=date(2024, 1, 3),
+                open=Decimal("10"),
+                high=Decimal("9"),
+                low=Decimal("8"),
+                close=Decimal("9"),
+                volume=100,
+            ),
+        )
+
+
 def references(session: Session) -> tuple[int, int]:
     """Create an issuer, security, and source; return security/source IDs."""
     company = CompanyModel(name="Test Co", country_code="US")
@@ -60,6 +91,34 @@ def references(session: Session) -> tuple[int, int]:
     return security.id, source.id
 
 
+def test_mock_provider_uses_same_validation_and_persistence_flow(
+    session: Session,
+) -> None:
+    security_id, source_id = references(session)
+    importer = ImportHistoricalPrices(
+        MockPriceProvider(), SQLAlchemyDailyPriceRepository(session)
+    )
+    summary = importer.execute(
+        ImportHistoricalPricesInput(
+            HistoricalPriceRequest(security_id, "USD"),
+            source_id,
+            datetime(2024, 1, 4, 8, tzinfo=UTC),
+            datetime(2024, 1, 4, 9, tzinfo=UTC),
+        )
+    )
+    assert (
+        summary.total_records,
+        summary.imported_records,
+        summary.rejected_records,
+    ) == (
+        2,
+        1,
+        1,
+    )
+    assert summary.validation_errors[0].row_number == 2
+    assert session.query(DailyPriceModel).count() == 1
+
+
 def test_csv_price_import_revisions_and_point_in_time_retrieval(
     session: Session, tmp_path: Path
 ) -> None:
@@ -73,13 +132,11 @@ def test_csv_price_import_revisions_and_point_in_time_retrieval(
         "2024-01-03,15,12,9,11,100,,\n",
         encoding="utf-8",
     )
-    provider = CsvHistoricalMarketDataProvider()
+    provider = CsvHistoricalMarketDataProvider(price_file_path=csv_path)
     repository = SQLAlchemyDailyPriceRepository(session)
     importer = ImportHistoricalPrices(provider, repository)
     request = ImportHistoricalPricesInput(
-        file_path=csv_path,
-        security_id=security_id,
-        currency="usd",
+        request=HistoricalPriceRequest(security_id, "usd"),
         source_id=source_id,
         available_at=datetime(2024, 1, 3, 8, tzinfo=UTC),
         collected_at=datetime(2024, 1, 3, 9, tzinfo=UTC),
@@ -92,9 +149,7 @@ def test_csv_price_import_revisions_and_point_in_time_retrieval(
 
     revised = importer.execute(
         ImportHistoricalPricesInput(
-            file_path=csv_path,
-            security_id=security_id,
-            currency="USD",
+            request=HistoricalPriceRequest(security_id, "USD"),
             source_id=source_id,
             available_at=datetime(2024, 1, 5, 8, tzinfo=UTC),
             collected_at=datetime(2024, 1, 5, 9, tzinfo=UTC),
@@ -187,11 +242,11 @@ def test_fx_import_duplicate_revision_and_historical_retrieval(
         "USD,JPY,2024-01-04,0,,\n",
         encoding="utf-8",
     )
-    provider = CsvHistoricalMarketDataProvider()
+    provider = CsvHistoricalMarketDataProvider(fx_file_path=csv_path)
     repository = SQLAlchemyFxRateRepository(session)
     importer = ImportFxRates(provider, repository)
     request = ImportFxRatesInput(
-        csv_path,
+        FxRateRequest(),
         source_id,
         datetime(2024, 1, 3, 8, tzinfo=UTC),
         datetime(2024, 1, 3, 9, tzinfo=UTC),

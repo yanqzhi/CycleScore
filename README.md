@@ -4,7 +4,7 @@ CycleScope is an independent Python application for cyclical-stock intelligence.
 
 ## Architecture
 
-The package uses a modular monolith. Domain types and repository contracts stay independent of SQLAlchemy; Application use cases depend on typed ports; Infrastructure contains SQLAlchemy mappings, SQLite setup, repositories, configuration, logging, and a CSV provider. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The package uses a modular monolith. Domain types and repository contracts stay independent of SQLAlchemy; Application use cases depend on typed acquisition and repository ports; Infrastructure contains SQLAlchemy mappings, SQLite setup, repositories, configuration, logging, and input adapters. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Prerequisites and installation
 
@@ -31,7 +31,7 @@ This runs Alembic `upgrade head`; it does not delete or recreate the database. M
 
 ## CSV market-data import
 
-CSV import is available through injected application use cases. The CSV price columns are `date,open,high,low,close,volume`; `adjusted_close` and `publication_date` are optional. FX CSV columns are `base_currency,quote_currency,date,rate`; `publication_date` is optional. Prices and rates use decimal notation with a dot, and dates use `YYYY-MM-DD`.
+CSV import is available through the CSV input adapter and injected application use cases. The CSV price columns are `date,open,high,low,close,volume`; `adjusted_close` and `publication_date` are optional. FX CSV columns are `base_currency,quote_currency,date,rate`; `publication_date` is optional. Prices and rates use decimal notation with a dot, and dates use `YYYY-MM-DD`. Application ports use `HistoricalPriceRequest` / `FxRateRequest` and common `RawDailyPriceRecord` / `RawFxRateRecord` DTOs; they have no CSV or file-path dependency. CSV paths are configured only on `CsvHistoricalMarketDataProvider`.
 
 Example wiring (the security and data source must already exist):
 
@@ -39,7 +39,10 @@ Example wiring (the security and data source must already exist):
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cyclescope.application.dto.market_data import ImportHistoricalPricesInput
+from cyclescope.application.dto.market_data import (
+    HistoricalPriceRequest,
+    ImportHistoricalPricesInput,
+)
 from cyclescope.application.use_cases.market_data import ImportHistoricalPrices
 from cyclescope.infrastructure.database.repositories.market_data import (
     SQLAlchemyDailyPriceRepository,
@@ -59,13 +62,11 @@ session_factory = create_session_factory(engine)
 
 with session_factory.begin() as session:
     summary = ImportHistoricalPrices(
-        CsvHistoricalMarketDataProvider(),
+        CsvHistoricalMarketDataProvider(price_file_path=Path("prices.csv")),
         SQLAlchemyDailyPriceRepository(session),
     ).execute(
         ImportHistoricalPricesInput(
-            file_path=Path("prices.csv"),
-            security_id=1,
-            currency="USD",
+            request=HistoricalPriceRequest(security_id=1, currency="USD"),
             source_id=1,
             available_at=datetime(2024, 1, 3, 8, tzinfo=UTC),
             collected_at=datetime(2024, 1, 3, 9, tzinfo=UTC),
