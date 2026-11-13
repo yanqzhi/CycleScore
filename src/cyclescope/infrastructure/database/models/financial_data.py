@@ -26,6 +26,10 @@ class FinancialStatementModel(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("statement_type IN ('BS','PL','CF')", name="statement_type"),
         CheckConstraint(
+            "fiscal_period IN ('FY','Q1','Q2','Q3','Q4','H1','9M','TTM')",
+            name="fiscal_period",
+        ),
+        CheckConstraint(
             "consolidation_scope IN ('CONSOLIDATED','NON_CONSOLIDATED')",
             name="consolidation_scope",
         ),

@@ -79,11 +79,14 @@ class FinancialStatement:
             self, "collected_at", _utc("collected_at", self.collected_at)
         )
         if self.publication_datetime is not None:
-            object.__setattr__(
-                self,
-                "publication_datetime",
-                _utc("publication_datetime", self.publication_datetime),
+            publication_datetime = _utc(
+                "publication_datetime", self.publication_datetime
             )
+            if self.available_at < publication_datetime:
+                raise DomainValidationError(
+                    "available_at must not precede publication_datetime."
+                )
+            object.__setattr__(self, "publication_datetime", publication_datetime)
         if self.created_at is not None:
             object.__setattr__(self, "created_at", _utc("created_at", self.created_at))
         if self.updated_at is not None:
@@ -145,7 +148,7 @@ class FinancialStatementItem:
         if not isinstance(decimal_tuple.exponent, int):
             raise DomainValidationError("Financial value must be finite.")
         fractional_digits = max(-decimal_tuple.exponent, 0)
-        integer_digits = max(len(decimal_tuple.digits) - fractional_digits, 0)
+        integer_digits = max(len(decimal_tuple.digits) + decimal_tuple.exponent, 0)
         if fractional_digits > 12 or integer_digits > 26:
             raise DomainValidationError(
                 "Financial value exceeds NUMERIC(38, 12) precision."

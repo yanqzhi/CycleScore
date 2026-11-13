@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from cyclescope.application.use_cases.financial_data import (
     FinancialLineInput,
+    GetFinancialStatementAsOf,
     GetFinancialStatements,
     ImportFinancialStatement,
     ImportFinancialStatementInput,
@@ -19,6 +20,7 @@ from cyclescope.domain.entities.financial_data import (
     FinancialItem,
     FinancialItemMapping,
     FinancialStatement,
+    FinancialStatementItem,
 )
 from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.domain.value_objects.financial_data import (
@@ -30,6 +32,7 @@ from cyclescope.domain.value_objects.financial_data import (
 )
 from cyclescope.infrastructure.database.models import CompanyModel, DataSourceModel
 from cyclescope.infrastructure.database.models.financial_data import (
+    FinancialItemModel,
     FinancialStatementModel,
 )
 from cyclescope.infrastructure.database.repositories.financial_data import (
@@ -80,6 +83,27 @@ def test_statement_domain_validates_time_and_period():
             date(2027, 2, 1),
             None,
             datetime(2027, 2, 1),
+            NOW,
+            1,
+            "USD",
+        )
+
+
+def test_available_at_cannot_precede_known_publication_instant():
+    with pytest.raises(DomainValidationError, match="available_at"):
+        FinancialStatement(
+            1,
+            1,
+            StatementType.BS,
+            "IFRS",
+            ConsolidationScope.CONSOLIDATED,
+            2026,
+            FiscalPeriod.FY,
+            None,
+            date(2026, 3, 31),
+            date(2026, 5, 15),
+            datetime(2026, 5, 15, 17, tzinfo=UTC),
+            datetime(2026, 5, 15, 16, tzinfo=UTC),
             NOW,
             1,
             "USD",
@@ -157,6 +181,10 @@ def test_financial_statement_import_is_as_of_and_source_scoped(session):
         )
     )
     importer.execute(request(source2.id, 1, NOW, NOW, Decimal("101")))
+    stored_item = session.get(FinancialItemModel, item.id)
+    assert stored_item is not None
+    stored_item.is_active = False
+    session.flush()
     query = GetFinancialStatements(statements, lines)
     before = query.execute(
         company.id, NOW + timedelta(days=1), statement_type=StatementType.PL
@@ -165,6 +193,34 @@ def test_financial_statement_import_is_as_of_and_source_scoped(session):
         (source1.id, Decimal("100")),
         (source2.id, Decimal("101")),
     }
+    same_instant_utc = query.execute(
+        company.id,
+        datetime(2026, 5, 15, 16, tzinfo=UTC),
+        statement_type=StatementType.PL,
+    )
+    same_instant_jst = query.execute(
+        company.id,
+        datetime(2026, 5, 16, 1, tzinfo=timezone(timedelta(hours=9))),
+        statement_type=StatementType.PL,
+    )
+    assert [(x.statement.id, x.items[0].value) for x in same_instant_utc] == [
+        (x.statement.id, x.items[0].value) for x in same_instant_jst
+    ]
+    earlier_non_utc = query.execute(
+        company.id,
+        datetime(2026, 5, 16, 0, 59, tzinfo=timezone(timedelta(hours=9))),
+        statement_type=StatementType.PL,
+    )
+    assert all(x.statement.source_id != source1.id for x in earlier_non_utc)
+    later_non_utc = query.execute(
+        company.id,
+        datetime(2026, 5, 16, 2, tzinfo=timezone(timedelta(hours=9))),
+        statement_type=StatementType.PL,
+    )
+    assert any(
+        x.statement.source_id == source1.id and x.items[0].value == Decimal("100")
+        for x in later_non_utc
+    )
     after = query.execute(
         company.id, NOW + timedelta(days=3), statement_type=StatementType.PL
     )
@@ -172,6 +228,114 @@ def test_financial_statement_import_is_as_of_and_source_scoped(session):
         (source1.id, Decimal("90")),
         (source2.id, Decimal("101")),
     }
+    point_query = GetFinancialStatementAsOf(query)
+    selected = point_query.execute(
+        company.id, StatementType.PL, 2026, FiscalPeriod.Q1, NOW, source_id=source1.id
+    )
+    assert selected is not None and selected.items[0].value == Decimal("100")
+    selected_later = point_query.execute(
+        company.id,
+        StatementType.PL,
+        2026,
+        FiscalPeriod.Q1,
+        NOW + timedelta(days=3),
+        source_id=source1.id,
+    )
+    assert selected_later is not None and selected_later.items[0].value == Decimal("90")
+    assert (
+        point_query.execute(
+            company.id,
+            StatementType.PL,
+            2025,
+            FiscalPeriod.FY,
+            NOW,
+            source_id=source1.id,
+        )
+        is None
+    )
+    with pytest.raises(DomainValidationError, match="source_id is required"):
+        point_query.execute(company.id, StatementType.PL, 2026, FiscalPeriod.Q1, NOW)
+    stored_item.is_active = True
+    session.flush()
+    ambiguous_period = replace(
+        request(source1.id, 1, NOW, NOW, Decimal("102")),
+        period_start=date(2026, 4, 1),
+        period_end=date(2026, 6, 30),
+    )
+    importer.execute(ambiguous_period)
+    stored_item.is_active = False
+    session.flush()
+    with pytest.raises(DomainValidationError, match="ambiguous"):
+        point_query.execute(
+            company.id,
+            StatementType.PL,
+            2026,
+            FiscalPeriod.Q1,
+            NOW,
+            source_id=source1.id,
+        )
+    inactive = FinancialItem(
+        "INACTIVE",
+        "Inactive",
+        StatementType.PL,
+        "income",
+        UnitDimension.CURRENCY_AMOUNT,
+        is_active=False,
+    )
+    inactive = items.create(inactive)
+    with pytest.raises(DomainValidationError, match="inactive"):
+        importer.execute(
+            replace(
+                request(source1.id, 3, NOW + timedelta(days=3), NOW, Decimal("1")),
+                items=(
+                    FinancialLineInput(inactive.id, Decimal("1"), "CURRENCY", 1, "USD"),
+                ),
+            )
+        )
+    assert query.execute(company.id, NOW + timedelta(days=3), source_id=source1.id)
+
+
+@pytest.mark.parametrize(
+    ("value", "should_be_valid"),
+    [
+        (Decimal("1E+25"), True),
+        (Decimal("1E+26"), False),
+        (Decimal("1E+30"), False),
+        (Decimal("0.000000000001"), True),
+        (Decimal("0.0000000000001"), False),
+        (Decimal("-1E+25"), True),
+        (Decimal("-1E+26"), False),
+    ],
+)
+def test_numeric_38_12_precision_boundaries(
+    value: Decimal, should_be_valid: bool
+) -> None:
+    statement = FinancialStatement(
+        1,
+        1,
+        StatementType.PL,
+        "IFRS",
+        ConsolidationScope.CONSOLIDATED,
+        2026,
+        FiscalPeriod.Q1,
+        date(2026, 1, 1),
+        date(2026, 3, 31),
+        date(2026, 5, 15),
+        None,
+        NOW,
+        NOW,
+        1,
+        "USD",
+    )
+    item = FinancialItem(
+        "REVENUE", "Revenue", StatementType.PL, "income", UnitDimension.CURRENCY_AMOUNT
+    )
+    line = FinancialStatementItem(1, 1, value, "USD", "CURRENCY", 1)
+    if should_be_valid:
+        line.validate_for(item, statement)
+    else:
+        with pytest.raises(DomainValidationError, match=r"NUMERIC\(38, 12\)"):
+            line.validate_for(item, statement)
 
 
 def test_financial_migration_downgrade_and_reupgrade_preserve_existing_rows(
@@ -192,6 +356,10 @@ def test_financial_migration_downgrade_and_reupgrade_preserve_existing_rows(
         "financial_statement_items",
         "financial_item_mappings",
     } <= set(inspect(engine).get_table_names())
+    assert "ck_financial_statements_fiscal_period" in {
+        row["name"]
+        for row in inspect(engine).get_check_constraints("financial_statements")
+    }
     command.downgrade(config, "0004_security_listing_normalization")
     assert not (
         {

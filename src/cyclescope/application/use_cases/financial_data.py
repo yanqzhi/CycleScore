@@ -1,7 +1,7 @@
 """Provider-neutral financial statement application commands and queries."""
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from cyclescope.domain.entities.financial_data import (
@@ -84,8 +84,11 @@ class RegisterFinancialItemMapping:
     def execute(self, mapping: FinancialItemMapping) -> FinancialItemMapping:
         if self.sources.get_by_id(mapping.source_id) is None:
             raise DomainValidationError("Unknown data source.")
-        if self.items.get_by_id(mapping.financial_item_id) is None:
+        target_item = self.items.get_by_id(mapping.financial_item_id)
+        if target_item is None:
             raise DomainValidationError("Unknown financial item.")
+        if not target_item.is_active:
+            raise DomainValidationError("Cannot map an inactive financial item.")
         if self.repository.exists_mapping(
             mapping.source_id, mapping.source_item_code, mapping.accounting_standard
         ):
@@ -149,6 +152,10 @@ class ImportFinancialStatement:
             item = self.items.get_by_id(line.item_id)
             if item is None:
                 raise DomainValidationError(f"Unknown financial item {line.item_id}.")
+            if not item.is_active:
+                raise DomainValidationError(
+                    f"Financial item {line.item_id} is inactive for new imports."
+                )
             value = FinancialStatementItem(
                 financial_statement_id=0,
                 financial_item_id=line.item_id,
@@ -177,6 +184,12 @@ class ImportFinancialStatement:
 
 
 class GetFinancialStatements:
+    """Read visible statements using a UTC-normalized availability cutoff.
+
+    SQLite may return stored timestamps without timezone metadata, so the
+    repository comparison contract is that every query cutoff is UTC-aware.
+    """
+
     def __init__(
         self,
         statements: FinancialStatementRepository,
@@ -194,8 +207,12 @@ class GetFinancialStatements:
     ) -> list[FinancialStatementResult]:
         if as_of.tzinfo is None or as_of.utcoffset() is None:
             raise DomainValidationError("as_of must be timezone-aware.")
+        as_of_utc = as_of.astimezone(UTC)
         visible = self.statements.get_available_as_of(
-            company_id, as_of, statement_type=statement_type, source_id=source_id
+            company_id,
+            as_of_utc,
+            statement_type=statement_type,
+            source_id=source_id,
         )
         latest: dict[
             tuple[int, str, str, str, int, str, date | None, date], FinancialStatement
