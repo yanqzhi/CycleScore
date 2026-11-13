@@ -74,7 +74,7 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
             ).scalar_one()
-            == "0001_master_data"
+            == "0002_market_data"
         )
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
     engine.dispose()

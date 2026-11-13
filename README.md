@@ -1,10 +1,10 @@
 # CycleScope
 
-CycleScope is an independent Python application for cyclical-stock intelligence. Sprint 01 provides the project foundation and master-data persistence only; analytical engines and market-data integrations are not implemented.
+CycleScope is an independent Python application for cyclical-stock intelligence. It includes master-data persistence and provider-independent infrastructure for importing and retrieving daily OHLCV prices and FX rates. Live provider integrations and analytical engines are not implemented.
 
 ## Architecture
 
-The package uses a modular monolith. Domain types and repository contracts stay independent of SQLAlchemy; Infrastructure contains SQLAlchemy mappings, SQLite setup, repositories, configuration, and logging. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The package uses a modular monolith. Domain types and repository contracts stay independent of SQLAlchemy; Application use cases depend on typed ports; Infrastructure contains SQLAlchemy mappings, SQLite setup, repositories, configuration, logging, and a CSV provider. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Prerequisites and installation
 
@@ -27,7 +27,57 @@ Initialize or upgrade schema and idempotently seed the seven initial industries:
 cyclescope-init-db
 ```
 
-This runs Alembic `upgrade head`; it does not delete or recreate the database. See [docs/DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md).
+This runs Alembic `upgrade head`; it does not delete or recreate the database. Market-data schema changes are additive. See [docs/DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md).
+
+## CSV market-data import
+
+CSV import is available through injected application use cases. The CSV price columns are `date,open,high,low,close,volume`; `adjusted_close` and `publication_date` are optional. FX CSV columns are `base_currency,quote_currency,date,rate`; `publication_date` is optional. Prices and rates use decimal notation with a dot, and dates use `YYYY-MM-DD`.
+
+Example wiring (the security and data source must already exist):
+
+```python
+from datetime import UTC, datetime
+from pathlib import Path
+
+from cyclescope.application.dto.market_data import ImportHistoricalPricesInput
+from cyclescope.application.use_cases.market_data import ImportHistoricalPrices
+from cyclescope.infrastructure.database.repositories.market_data import (
+    SQLAlchemyDailyPriceRepository,
+)
+from cyclescope.infrastructure.database.session import (
+    create_database_engine,
+    create_session_factory,
+)
+from cyclescope.infrastructure.config import get_settings
+from cyclescope.infrastructure.market_data.csv_provider import (
+    CsvHistoricalMarketDataProvider,
+)
+
+settings = get_settings()
+engine = create_database_engine(settings.database_url)
+session_factory = create_session_factory(engine)
+
+with session_factory.begin() as session:
+    summary = ImportHistoricalPrices(
+        CsvHistoricalMarketDataProvider(),
+        SQLAlchemyDailyPriceRepository(session),
+    ).execute(
+        ImportHistoricalPricesInput(
+            file_path=Path("prices.csv"),
+            security_id=1,
+            currency="USD",
+            source_id=1,
+            available_at=datetime(2024, 1, 3, 8, tzinfo=UTC),
+            collected_at=datetime(2024, 1, 3, 9, tzinfo=UTC),
+            revision_number=1,
+        )
+    )
+    print(
+        summary.imported_records, summary.skipped_duplicates, summary.rejected_records
+    )
+```
+
+The import summary lists row-level validation errors. Duplicate keys are skipped without overwriting stored data. Full format, provenance, revision, and availability rules are documented in [docs/MARKET_DATA_SPEC.md](docs/MARKET_DATA_SPEC.md).
 
 ## Development
 
