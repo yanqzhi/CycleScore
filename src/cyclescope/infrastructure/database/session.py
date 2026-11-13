@@ -31,10 +31,21 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 @contextmanager
 def transaction(session_factory: sessionmaker[Session]) -> Iterator[Session]:
-    """Yield a session and commit on success, rolling back on failure."""
+    """Run an atomic unit of work, reserving SQLite's single writer up front."""
     session = session_factory()
     try:
-        with session.begin():
+        if session.get_bind().dialect.name == "sqlite":
+            # A deferred SQLite transaction can validate against a stale read
+            # snapshot before competing to write. IMMEDIATE serializes writers
+            # before Application check-then-insert rules execute.
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
             yield session
+            session.commit()
+        else:
+            with session.begin():
+                yield session
+    except BaseException:
+        session.rollback()
+        raise
     finally:
         session.close()

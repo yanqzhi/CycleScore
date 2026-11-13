@@ -4,7 +4,7 @@ CycleScope is an independent Python application for cyclical-stock intelligence.
 
 ## Architecture
 
-The package uses a modular monolith. Domain types and repository contracts stay independent of SQLAlchemy; Application use cases depend on typed acquisition and repository ports; Infrastructure contains SQLAlchemy mappings, SQLite setup, repositories, configuration, logging, and input adapters. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/MASTER_DATA_SPEC.md](docs/MASTER_DATA_SPEC.md).
+The package uses a modular monolith. Domain types and repository contracts stay independent of SQLAlchemy; Application use cases depend on typed acquisition and repository ports; Infrastructure contains SQLAlchemy mappings, SQLite setup, repositories, configuration, logging, and input adapters. Security represents an instrument; Exchange-scoped Listing records hold tickers and trading lifecycle. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/MASTER_DATA_SPEC.md](docs/MASTER_DATA_SPEC.md), and [docs/DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md).
 
 ## Prerequisites and installation
 
@@ -27,7 +27,7 @@ Initialize or upgrade schema and idempotently seed the seven initial industries:
 cyclescope-init-db
 ```
 
-This runs Alembic `upgrade head`; it does not delete or recreate the database. Market-data schema changes are additive. See [docs/DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md).
+This runs Alembic `upgrade head`; it does not delete or recreate the database. Migrations preserve Security IDs, normalize recognized legacy listings, and retain unmappable rows for reconciliation. See [docs/DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md) and [docs/MASTER_DATA_SPEC.md](docs/MASTER_DATA_SPEC.md).
 
 ## CSV market-data import
 

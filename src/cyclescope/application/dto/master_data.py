@@ -17,12 +17,7 @@ class CompanyInput:
 @dataclass(frozen=True, slots=True)
 class SecurityInput:
     company_id: int
-    ticker: str
-    exchange: str
-    currency: str
     security_type: str
-    listing_date: date | None = None
-    delisting_date: date | None = None
     is_active: bool = True
 
 

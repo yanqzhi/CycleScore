@@ -81,9 +81,6 @@ def references(session: Session) -> tuple[int, int]:
     session.flush()
     security = SecurityModel(
         company_id=company.id,
-        ticker="TEST",
-        exchange="NYSE",
-        currency="USD",
         security_type="common_stock",
     )
     session.add(security)

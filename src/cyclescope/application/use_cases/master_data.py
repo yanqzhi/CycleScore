@@ -35,6 +35,7 @@ from cyclescope.domain.repositories.contracts import (
     SecurityIdentifierRepository,
     SecurityRepository,
 )
+from cyclescope.domain.value_objects.security_identifier import resolve_identifier_scope
 
 
 class RegisterCompany:
@@ -82,12 +83,7 @@ class RegisterSecurity:
         return self._repository.create(
             Security(
                 company_id=request.company_id,
-                ticker=request.ticker,
-                exchange=request.exchange,
-                currency=request.currency,
                 security_type=request.security_type,
-                listing_date=request.listing_date,
-                delisting_date=request.delisting_date,
                 is_active=request.is_active,
             )
         )
@@ -104,12 +100,7 @@ class UpdateSecurity:
             Security(
                 id=security_id,
                 company_id=request.company_id,
-                ticker=request.ticker,
-                exchange=request.exchange,
-                currency=request.currency,
                 security_type=request.security_type,
-                listing_date=request.listing_date,
-                delisting_date=request.delisting_date,
                 is_active=request.is_active,
             )
         )
@@ -179,7 +170,9 @@ class RegisterSecurityIdentifier:
             valid_to=request.valid_to,
         )
         for existing in self._repository.list_by_identifier(
-            candidate.identifier_type, candidate.identifier_value, candidate.exchange_id
+            candidate.identifier_type,
+            candidate.identifier_value,
+            resolve_identifier_scope(candidate.identifier_type, candidate.exchange_id),
         ):
             if _ranges_overlap(
                 existing.valid_from,
@@ -214,7 +207,9 @@ class UpdateSecurityIdentifier:
             valid_to=request.valid_to,
         )
         for existing in self._repository.list_by_identifier(
-            candidate.identifier_type, candidate.identifier_value, candidate.exchange_id
+            candidate.identifier_type,
+            candidate.identifier_value,
+            resolve_identifier_scope(candidate.identifier_type, candidate.exchange_id),
         ):
             if existing.id != identifier_id and _ranges_overlap(
                 existing.valid_from,
@@ -248,6 +243,10 @@ class RegisterListing:
             delisting_date=request.delisting_date,
             status=request.status,
         )
+        if candidate.status != "active":
+            raise DomainValidationError(
+                "New listings must start active; record later status changes as events."
+            )
         for existing in self._repository.list_by_exchange_ticker(
             candidate.exchange_id, candidate.ticker
         ):

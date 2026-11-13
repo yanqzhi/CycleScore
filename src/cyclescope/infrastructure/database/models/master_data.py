@@ -87,20 +87,12 @@ class SecurityModel(TimestampMixin, Base):
     """Tradable security listing."""
 
     __tablename__ = "securities"
-    __table_args__ = (
-        UniqueConstraint("exchange", "ticker", name="uq_securities_exchange_ticker"),
-        Index("ix_securities_company_id", "company_id"),
-    )
+    __table_args__ = (Index("ix_securities_company_id", "company_id"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(
         ForeignKey("companies.id", ondelete="RESTRICT"), nullable=False
     )
-    ticker: Mapped[str] = mapped_column(String(32), nullable=False)
-    exchange: Mapped[str] = mapped_column(String(32), nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False)
     security_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    listing_date: Mapped[date | None] = mapped_column(Date)
-    delisting_date: Mapped[date | None] = mapped_column(Date)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     company: Mapped[CompanyModel] = relationship(back_populates="securities")
 
@@ -211,6 +203,25 @@ class ListingStatusEventModel(TimestampMixin, Base):
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+
+
+class LegacyListingReconciliationModel(TimestampMixin, Base):
+    """Legacy security listing rows which could not be safely normalized."""
+
+    __tablename__ = "legacy_listing_reconciliation"
+    __table_args__ = (
+        UniqueConstraint("security_id", name="uq_legacy_listing_security"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    security_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.id", ondelete="RESTRICT"), nullable=False
+    )
+    ticker: Mapped[str] = mapped_column(String(32), nullable=False)
+    exchange_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    listing_date: Mapped[date | None] = mapped_column(Date)
+    delisting_date: Mapped[date | None] = mapped_column(Date)
+    reason: Mapped[str] = mapped_column(String(240), nullable=False)
 
 
 class DataSourceModel(TimestampMixin, Base):

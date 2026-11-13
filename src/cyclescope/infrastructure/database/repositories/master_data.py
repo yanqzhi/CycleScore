@@ -31,6 +31,10 @@ from cyclescope.domain.repositories.contracts import (
     SecurityRepository,
     SubIndustryRepository,
 )
+from cyclescope.domain.value_objects.security_identifier import (
+    IdentifierScopeKind,
+    IdentifierUniquenessScope,
+)
 from cyclescope.infrastructure.database.models import (
     CompanyIndustryExposureModel,
     CompanyModel,
@@ -202,12 +206,7 @@ class SecuritySqlAlchemyRepository(
             lambda row: Security(
                 id=row.id,
                 company_id=row.company_id,
-                ticker=row.ticker,
-                exchange=row.exchange,
-                currency=row.currency,
                 security_type=row.security_type,
-                listing_date=row.listing_date,
-                delisting_date=row.delisting_date,
                 is_active=row.is_active,
                 created_at=self._utc(row.created_at),
                 updated_at=self._utc(row.updated_at),
@@ -294,17 +293,18 @@ class SecurityIdentifierSqlAlchemyRepository(
         return [self._to_entity(row) for row in rows]
 
     def list_by_identifier(
-        self, identifier_type: str, identifier_value: str, exchange_id: int | None
+        self,
+        identifier_type: str,
+        identifier_value: str,
+        scope: IdentifierUniquenessScope,
     ) -> list[SecurityIdentifier]:
         statement = select(SecurityIdentifierModel).where(
             SecurityIdentifierModel.identifier_type == identifier_type,
             SecurityIdentifierModel.identifier_value == identifier_value,
         )
-        if exchange_id is None:
-            statement = statement.where(SecurityIdentifierModel.exchange_id.is_(None))
-        else:
+        if scope.kind is IdentifierScopeKind.EXCHANGE:
             statement = statement.where(
-                SecurityIdentifierModel.exchange_id == exchange_id
+                SecurityIdentifierModel.exchange_id == scope.exchange_id
             )
         rows = self._session.scalars(statement)
         return [self._to_entity(row) for row in rows]

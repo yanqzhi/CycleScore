@@ -74,7 +74,7 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
             ).scalar_one()
-            == "0003_multimarket_master_data"
+            == "0004_security_listing_normalization"
         )
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
     engine.dispose()
@@ -114,9 +114,6 @@ def test_each_master_repository_maps_to_domain_entities(session: Session) -> Non
     security = SecuritySqlAlchemyRepository(session).create(
         Security(
             company_id=company.id or 0,
-            ticker="1234",
-            exchange="TSE",
-            currency="JPY",
             security_type="common_stock",
         )
     )

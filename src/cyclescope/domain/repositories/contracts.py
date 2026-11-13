@@ -16,6 +16,9 @@ from cyclescope.domain.entities.security import Security
 from cyclescope.domain.entities.security_identifier import SecurityIdentifier
 from cyclescope.domain.entities.sub_industry import SubIndustry
 from cyclescope.domain.value_objects.market_data import CurrencyPair, MarketDataPeriod
+from cyclescope.domain.value_objects.security_identifier import (
+    IdentifierUniquenessScope,
+)
 
 
 class Repository[EntityT](ABC):
@@ -71,7 +74,10 @@ class SecurityIdentifierRepository(Repository[SecurityIdentifier], ABC):
 
     @abstractmethod
     def list_by_identifier(
-        self, identifier_type: str, identifier_value: str, exchange_id: int | None
+        self,
+        identifier_type: str,
+        identifier_value: str,
+        scope: IdentifierUniquenessScope,
     ) -> list[SecurityIdentifier]:
         """Return identifiers sharing a provider-neutral identifier scope."""
 

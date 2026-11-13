@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from cyclescope.domain.exceptions import DomainValidationError
+from cyclescope.domain.value_objects.security_identifier import resolve_identifier_scope
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +22,9 @@ class SecurityIdentifier:
     updated_at: datetime | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "identifier_type", self.identifier_type.strip().upper()
+        )
         if self.security_id < 1 or (
             self.exchange_id is not None and self.exchange_id < 1
         ):
@@ -29,6 +33,7 @@ class SecurityIdentifier:
             )
         if not self.identifier_type.strip() or not self.identifier_value.strip():
             raise DomainValidationError("Identifier type and value are required.")
+        resolve_identifier_scope(self.identifier_type, self.exchange_id)
         if self.valid_from and self.valid_to and self.valid_to < self.valid_from:
             raise DomainValidationError(
                 "Identifier valid_to must not precede valid_from."

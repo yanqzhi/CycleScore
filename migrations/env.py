@@ -35,13 +35,30 @@ def run_migrations_online() -> None:
     )
     with connectable.connect() as connection:
         if connection.dialect.name == "sqlite":
-            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+            # SQLite cannot rebuild a referenced table with FK checks enabled.
+            # Disable checks only around Alembic DDL, then restore and verify.
+            connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
             connection.commit()
-        context.configure(
-            connection=connection, target_metadata=target_metadata, compare_type=True
-        )
-        with context.begin_transaction():
-            context.run_migrations()
+        try:
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                compare_type=True,
+            )
+            with context.begin_transaction():
+                context.run_migrations()
+        finally:
+            if connection.dialect.name == "sqlite":
+                connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+                connection.commit()
+                violations = connection.exec_driver_sql(
+                    "PRAGMA foreign_key_check"
+                ).all()
+                if violations:
+                    raise RuntimeError(
+                        "SQLite foreign-key check failed after migrations: "
+                        f"{violations}"
+                    )
 
 
 if context.is_offline_mode():
