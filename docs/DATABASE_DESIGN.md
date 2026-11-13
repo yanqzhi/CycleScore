@@ -12,3 +12,5 @@ All tables use integer primary keys and UTC `created_at` / `updated_at` timestam
 | `data_sources` | Provider metadata only; no API credentials. Unique code. |
 
 SQLite foreign-key enforcement is enabled on every connection. Alembic owns schema changes; initialization upgrades to `head` and inserts missing initial industries without overwriting existing rows. No market time-series tables are included in Sprint 01.
+
+The application validates that each company's revenue shares across all time-overlapping exposure records sum to no more than `1`. The validator must receive the complete company exposure set, including proposed changes. This aggregate rule is deliberately application-level; the schema retains only per-record range and date-order checks.

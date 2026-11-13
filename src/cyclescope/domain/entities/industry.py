@@ -1,6 +1,7 @@
 """Industry domain entity."""
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from cyclescope.domain.exceptions import DomainValidationError
 
@@ -13,6 +14,8 @@ class Industry:
     name: str
     id: int | None = None
     is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if not self.code or self.code != self.code.strip() or not self.code.isupper():

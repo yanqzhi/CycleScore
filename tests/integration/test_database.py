@@ -1,5 +1,6 @@
 """Database integrity and repository tests."""
 
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -9,7 +10,17 @@ from alembic.config import Config
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from cyclescope.infrastructure.database.initialize import seed_industries
+from cyclescope.domain.entities import (
+    Company,
+    DataSource,
+    Industry,
+    Security,
+    SubIndustry,
+)
+from cyclescope.infrastructure.database.initialize import (
+    INITIAL_INDUSTRIES,
+    seed_industries,
+)
 from cyclescope.infrastructure.database.models import (
     CompanyIndustryExposureModel,
     CompanyModel,
@@ -17,7 +28,11 @@ from cyclescope.infrastructure.database.models import (
     SubIndustryModel,
 )
 from cyclescope.infrastructure.database.repositories.master_data import (
+    CompanySqlAlchemyRepository,
+    DataSourceSqlAlchemyRepository,
     IndustrySqlAlchemyRepository,
+    SecuritySqlAlchemyRepository,
+    SubIndustrySqlAlchemyRepository,
 )
 from cyclescope.infrastructure.database.session import (
     create_database_engine,
@@ -35,13 +50,25 @@ def test_seed_is_repeatable(session: Session) -> None:
 
 
 def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
-    """Apply the actual migration twice and retain a single versioned schema."""
+    """Seed a migrated database repeatedly without overwriting master data."""
     database_path = tmp_path / "migration.db"  # type: ignore[operator]
     config = Config(str(Path.cwd() / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
     command.upgrade(config, "head")
     command.upgrade(config, "head")
     engine = create_database_engine(f"sqlite:///{database_path}")
+    factory = create_session_factory(engine)
+    with factory.begin() as session:
+        assert session.query(IndustryModel).count() == 0
+        session.add(IndustryModel(code="STEEL", name="User's steel label"))
+        session.add(IndustryModel(code="CUSTOM", name="Custom industry"))
+    with factory.begin() as session:
+        seed_industries(session)
+    with factory.begin() as session:
+        seed_industries(session)
+        steel = session.query(IndustryModel).filter_by(code="STEEL").one()
+        assert steel.name == "User's steel label"
+        assert session.query(IndustryModel).count() == len(INITIAL_INDUSTRIES) + 1
     with engine.connect() as connection:
         assert (
             connection.exec_driver_sql(
@@ -49,28 +76,61 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             ).scalar_one()
             == "0001_master_data"
         )
-        assert (
-            connection.exec_driver_sql("SELECT COUNT(*) FROM industries").scalar_one()
-            == 0
-        )
+        assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
     engine.dispose()
 
 
 def test_repository_crud(session: Session) -> None:
     repository = IndustrySqlAlchemyRepository(session)
-    created = repository.create({"code": "STEEL", "name": "Steel"})
+    created = repository.create(Industry(code="STEEL", name="Steel"))
     session.commit()
-    assert repository.get_by_id(created["id"]) == created
-    assert created["created_at"].tzinfo is not None
-    assert repository.list()[0]["code"] == "STEEL"
-    updated = repository.update(created["id"], {"name": "Steel & Iron"})
-    assert updated is not None and updated["name"] == "Steel & Iron"
-    assert repository.delete(created["id"])
-    assert repository.get_by_id(created["id"]) is None
-    assert repository.update(created["id"], {"name": "missing"}) is None
-    assert not repository.delete(created["id"])
+    assert isinstance(created, Industry)
+    assert created.created_at is not None and created.created_at.utcoffset() is not None
+    assert repository.get_by_id(created.id or 0) == created
+    assert repository.list()[0] == created
+    updated = repository.update(replace(created, name="Steel & Iron"))
+    assert updated is not None and updated.name == "Steel & Iron"
+    assert updated.updated_at is not None
+    assert created.updated_at is not None and updated.updated_at >= created.updated_at
+    assert repository.delete(created.id or 0)
+    assert repository.get_by_id(created.id or 0) is None
+    assert repository.update(Industry(code="MISSING", name="Missing")) is None
+    assert not repository.delete(created.id or 0)
     with pytest.raises(ValueError):
         repository.list(limit=0)
+
+
+def test_each_master_repository_maps_to_domain_entities(session: Session) -> None:
+    """Ensure no SQLAlchemy model escapes any master-data repository."""
+    industry = IndustrySqlAlchemyRepository(session).create(
+        Industry(code="STEEL", name="Steel")
+    )
+    sub_industry = SubIndustrySqlAlchemyRepository(session).create(
+        SubIndustry(industry_id=industry.id or 0, code="FLAT", name="Flat steel")
+    )
+    company = CompanySqlAlchemyRepository(session).create(
+        Company(name="Example Co", country_code="JP")
+    )
+    security = SecuritySqlAlchemyRepository(session).create(
+        Security(
+            company_id=company.id or 0,
+            ticker="1234",
+            exchange="TSE",
+            currency="JPY",
+            security_type="common_stock",
+        )
+    )
+    source = DataSourceSqlAlchemyRepository(session).create(
+        DataSource(code="EXAMPLE", name="Example", provider_type="manual")
+    )
+    assert isinstance(industry, Industry)
+    assert isinstance(sub_industry, SubIndustry)
+    assert isinstance(company, Company)
+    assert isinstance(security, Security)
+    assert isinstance(source, DataSource)
+    assert isinstance(
+        SecuritySqlAlchemyRepository(session).get_by_id(security.id or 0), Security
+    )
 
 
 def test_transaction_context_commits_and_rolls_back(tmp_path: object) -> None:

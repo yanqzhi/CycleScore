@@ -1,38 +1,53 @@
-"""Repository interfaces for master data."""
+"""Domain-owned CRUD repository contracts for master data."""
 
 from abc import ABC, abstractmethod
-from typing import TypeVar
 
-T = TypeVar("T")
+from cyclescope.domain.entities import Industry
+from cyclescope.domain.entities.company import Company
+from cyclescope.domain.entities.data_source import DataSource
+from cyclescope.domain.entities.security import Security
+from cyclescope.domain.entities.sub_industry import SubIndustry
 
 
-class ReadRepository[T](ABC):
-    """Common read contract for a domain aggregate."""
+class Repository[EntityT](ABC):
+    """CRUD contract for an immutable domain entity."""
 
     @abstractmethod
-    def get_by_id(self, entity_id: int) -> T | None:
-        """Return an entity by its identifier."""
+    def create(self, entity: EntityT) -> EntityT:
+        """Persist an entity and return it with its assigned identity."""
 
     @abstractmethod
-    def list(self, *, limit: int = 100, offset: int = 0) -> list[T]:
+    def get_by_id(self, entity_id: int) -> EntityT | None:
+        """Return an entity by identifier, or ``None`` when it is absent."""
+
+    @abstractmethod
+    def list(self, *, limit: int = 100, offset: int = 0) -> list[EntityT]:
         """Return a page of entities."""
 
+    @abstractmethod
+    def update(self, entity: EntityT) -> EntityT | None:
+        """Update an entity and return it, or ``None`` when it is absent."""
 
-class IndustryRepository(ReadRepository[object], ABC):
+    @abstractmethod
+    def delete(self, entity_id: int) -> bool:
+        """Delete by identifier and report whether a row was removed."""
+
+
+class IndustryRepository(Repository[Industry], ABC):
     """Industry persistence contract."""
 
 
-class SubIndustryRepository(ReadRepository[object], ABC):
+class SubIndustryRepository(Repository[SubIndustry], ABC):
     """Sub-industry persistence contract."""
 
 
-class CompanyRepository(ReadRepository[object], ABC):
+class CompanyRepository(Repository[Company], ABC):
     """Company persistence contract."""
 
 
-class SecurityRepository(ReadRepository[object], ABC):
+class SecurityRepository(Repository[Security], ABC):
     """Security persistence contract."""
 
 
-class DataSourceRepository(ReadRepository[object], ABC):
+class DataSourceRepository(Repository[DataSource], ABC):
     """Data source persistence contract."""
