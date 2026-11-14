@@ -57,6 +57,58 @@ _NORMALIZED_METRIC = {
 }
 
 
+def _normalized_sources(row: NormalizedEarningsResult) -> tuple[set[int], set[int]]:
+    financial_sources = {
+        reference.source_id
+        for reference in row.valuation_input_references
+        if reference.record_type == "FINANCIAL_LINE"
+    }
+    market_sources = {
+        reference.source_id
+        for reference in row.valuation_input_references
+        if reference.record_type == "DAILY_PRICE"
+    }
+    return financial_sources, market_sources
+
+
+def _matches_normalized_source_policy(
+    row: NormalizedEarningsResult,
+    base: ValuationMetricValue,
+    request: HistoricalValuationPercentileRequest,
+) -> bool:
+    financial_sources, market_sources = _normalized_sources(row)
+    expected_market_source = request.market_source_id or base.price_source_id
+    if expected_market_source is not None:
+        if market_sources != {expected_market_source}:
+            return False
+    elif len(market_sources) != 1:
+        return False
+
+    if request.financial_source_id is not None:
+        if financial_sources != {request.financial_source_id}:
+            return False
+    elif len(financial_sources) != 1:
+        return False
+    elif base.financial_source_ids:
+        base_sources = set(base.financial_source_ids)
+        if len(base_sources) != 1 or financial_sources != base_sources:
+            return False
+
+    return True
+
+
+def _matches_normalized_market_source(
+    row: NormalizedEarningsResult,
+    base: ValuationMetricValue,
+    request: HistoricalValuationPercentileRequest,
+) -> bool:
+    market_sources = _normalized_sources(row)[1]
+    expected_source = request.market_source_id or base.price_source_id
+    if expected_source is not None:
+        return market_sources == {expected_source}
+    return len(market_sources) == 1
+
+
 class CalculateHistoricalValuationPercentile:
     """Calculate one metric, rebuilding missing history through Sprint 10."""
 
@@ -194,7 +246,7 @@ class CalculateHistoricalValuationPercentile:
         )
         output: list[HistoricalValuationObservation] = []
         for base in base_rows:
-            matches = [
+            config_matches = [
                 row
                 for row in normalized_rows
                 if row.metric == earnings_metric
@@ -202,6 +254,23 @@ class CalculateHistoricalValuationPercentile:
                 and row.method == request.normalization_method
                 and row.requested_window_years == request.normalization_window_years
                 and row.da_sign_convention == request.da_sign_convention
+            ]
+            if request.financial_source_id is None:
+                cached_source_sets = {
+                    tuple(sorted(sources))
+                    for row in config_matches
+                    if _matches_normalized_market_source(row, base, request)
+                    if (sources := _normalized_sources(row)[0])
+                }
+                if len(cached_source_sets) > 1:
+                    raise DomainValidationError(
+                        "financial_source_id is required when cached normalized "
+                        "results contain multiple source sets."
+                    )
+            matches = [
+                row
+                for row in config_matches
+                if _matches_normalized_source_policy(row, base, request)
             ]
             if matches:
                 output.extend(
@@ -215,8 +284,15 @@ class CalculateHistoricalValuationPercentile:
                     security_id=request.security_id,
                     valuation_date=base.observation_date,
                     as_of=base.as_of,
-                    financial_source_id=request.financial_source_id,
-                    market_source_id=request.market_source_id,
+                    financial_source_id=(
+                        request.financial_source_id
+                        or (
+                            base.financial_source_ids[0]
+                            if len(base.financial_source_ids) == 1
+                            else None
+                        )
+                    ),
+                    market_source_id=request.market_source_id or base.price_source_id,
                 )
             )
             generated = self._normalized_calculator.execute(
@@ -227,11 +303,23 @@ class CalculateHistoricalValuationPercentile:
                     window_years=request.normalization_window_years,
                     method=request.normalization_method,
                     da_sign_convention=request.da_sign_convention,
-                    source_id=request.financial_source_id,
+                    source_id=(
+                        request.financial_source_id
+                        or (
+                            base.financial_source_ids[0]
+                            if len(base.financial_source_ids) == 1
+                            else None
+                        )
+                    ),
                     valuation_inputs=inputs,
                 )
             )
             selected = next(row for row in generated if row.metric == earnings_metric)
+            if not _matches_normalized_source_policy(selected, base, request):
+                raise DomainValidationError(
+                    "Generated normalized earnings source references do not match "
+                    "the requested historical source policy."
+                )
             normalized_rows.extend(generated)
             if selected.normalized_valuation_status is not None:
                 output.append(self._from_normalized(selected, base))
@@ -295,9 +383,7 @@ class CalculateHistoricalValuationPercentile:
                 f"{row.effective_window_years}"
             ),
             calculation_version=row.calculation_version,
-            market_source_id=(
-                price_refs[0].source_id if price_refs else base.price_source_id
-            ),
+            market_source_id=price_refs[0].source_id if price_refs else None,
             financial_source_ids=sources,
             snapshot_id=base.id,
             normalized_earnings_result_id=row.id,

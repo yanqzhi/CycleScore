@@ -628,6 +628,221 @@ def test_missing_historical_normalized_result_reuses_sprint10_at_historical_cuto
     assert result.status == ValuationPercentileStatus.AVAILABLE
 
 
+def _cached_normalized_result(
+    result_id: int,
+    day: date,
+    as_of: datetime,
+    financial_source_ids: tuple[int, ...] | None,
+    market_source_ids: tuple[int, ...] = (1,),
+    *,
+    metric=EarningsMetric.EPS,
+):
+    references = [
+        ValuationInputReference(
+            "DAILY_PRICE",
+            21,
+            source_id,
+            1,
+            as_of,
+            observation_date=day,
+        )
+        for source_id in market_source_ids
+    ]
+    if financial_source_ids is not None:
+        references.extend(
+            ValuationInputReference(
+                "FINANCIAL_LINE",
+                30 + source_id,
+                source_id,
+                1,
+                as_of,
+                parent_record_id=40 + source_id,
+                financial_item_code=metric.value,
+                financial_period="FY",
+                period_end=date(day.year - 1, 12, 31),
+            )
+            for source_id in financial_source_ids
+        )
+    return SimpleNamespace(
+        id=result_id,
+        metric=metric,
+        as_of=as_of,
+        method=NormalizationMethod.ARITHMETIC_MEAN,
+        requested_window_years=5,
+        effective_window_years=5,
+        da_sign_convention=DepreciationAmortizationSignConvention.POSITIVE_EXPENSE,
+        valuation_input_references=tuple(references),
+        normalized_valuation_status=ValuationResultStatus.AVAILABLE,
+        normalized_valuation_value=Decimal("11"),
+        currency="USD",
+        status_reason=None,
+        normalized_valuation_reason=None,
+        calculation_version=1,
+    )
+
+
+def _run_normalized_percentile(
+    cached_rows,
+    *,
+    financial_source_id=1,
+    market_source_id=1,
+    metric=PercentileMetric.NORMALIZED_PER,
+    normalized_calculator=None,
+):
+    day = date(2026, 4, 17)
+    historical_as_of = datetime(2026, 4, 17, 16, tzinfo=UTC)
+    base = ValuationMetricValue(
+        security_id=1,
+        metric_code=(
+            ValuationMetricCode.PER
+            if metric == PercentileMetric.NORMALIZED_PER
+            else ValuationMetricCode.EV_EBITDA
+        ),
+        observation_date=day,
+        as_of=historical_as_of,
+        status=ValuationResultStatus.AVAILABLE,
+        value=Decimal("12"),
+        currency="USD",
+        unit=ValuationUnit.RATIO,
+        financial_period="TTM",
+        eps_calculation_method=None,
+        calculation_version=1,
+        price_observation_id=21,
+        price_source_id=market_source_id,
+        price_revision_number=1,
+        price_available_at=historical_as_of,
+        financial_statement_ids=(),
+        financial_source_ids=(1,),
+        financial_statement_available_ats=(),
+        id=100,
+    )
+    builder = _InputBuilder()
+    calculator = normalized_calculator or _HistoricalSprintTen()
+    use_case = CalculateHistoricalValuationPercentile(
+        _SecurityRepository(),
+        _ListingRepository(),
+        _ValuationRepository([base]),
+        _NormalizedRepository(cached_rows),
+        _ResultRepository(),
+        _Calendar((day,)),
+        builder,
+        calculator,
+    )
+    request = HistoricalValuationPercentileRequest(
+        security_id=1,
+        metric=metric,
+        lookback_period=ValuationLookbackPeriod.THREE_YEARS,
+        as_of=AS_OF,
+        calendar_id="TEST",
+        financial_source_id=financial_source_id,
+        market_source_id=market_source_id,
+        da_sign_convention=DepreciationAmortizationSignConvention.POSITIVE_EXPENSE,
+        policy=PercentilePolicy(1, 2, 3, Decimal("0.5")),
+    )
+    return use_case.execute(request).result, builder, calculator, day, historical_as_of
+
+
+def test_exact_cached_financial_and_market_sources_are_reused():
+    day = date(2026, 4, 17)
+    cutoff = datetime(2026, 4, 17, 16, tzinfo=UTC)
+    cached = _cached_normalized_result(55, day, cutoff, (1,))
+
+    class _MustNotRebuild:
+        def execute(self, request):
+            raise AssertionError("An exact source match should be reused.")
+
+    result, _, _, _, _ = _run_normalized_percentile(
+        [cached], normalized_calculator=_MustNotRebuild()
+    )
+    assert result.observations[0].normalized_earnings_result_id == 55
+    assert result.current_value == Decimal("11")
+
+
+@pytest.mark.parametrize("financial_sources", [(2,), (1, 2)])
+def test_different_or_mixed_cached_sources_trigger_historical_reconstruction(
+    financial_sources,
+):
+    day = date(2026, 4, 17)
+    cutoff = datetime(2026, 4, 17, 16, tzinfo=UTC)
+    cached = _cached_normalized_result(56, day, cutoff, financial_sources)
+    result, builder, calculator, _, historical_as_of = _run_normalized_percentile(
+        [cached]
+    )
+    assert builder.request.as_of == historical_as_of
+    assert builder.request.financial_source_id == 1
+    assert builder.request.market_source_id == 1
+    assert calculator.request.as_of == historical_as_of
+    assert calculator.request.source_id == 1
+    assert result.observations[0].normalized_earnings_result_id != 56
+
+
+def test_multiple_cached_source_results_reuse_only_exact_requested_source():
+    day = date(2026, 4, 17)
+    cutoff = datetime(2026, 4, 17, 16, tzinfo=UTC)
+    exact = _cached_normalized_result(57, day, cutoff, (1,))
+    other = _cached_normalized_result(58, day, cutoff, (2,))
+
+    class _MustNotRebuild:
+        def execute(self, request):
+            raise AssertionError("The requested source has a cached result.")
+
+    result, _, _, _, _ = _run_normalized_percentile(
+        [exact, other], normalized_calculator=_MustNotRebuild()
+    )
+    assert [row.normalized_earnings_result_id for row in result.observations] == [57]
+
+
+def test_missing_cached_source_metadata_triggers_reconstruction():
+    day = date(2026, 4, 17)
+    cutoff = datetime(2026, 4, 17, 16, tzinfo=UTC)
+    cached = _cached_normalized_result(59, day, cutoff, None)
+    result, builder, _, _, _ = _run_normalized_percentile([cached])
+    assert builder.request.financial_source_id == 1
+    assert result.observations[0].normalized_earnings_result_id != 59
+
+
+def test_generated_unexpected_financial_source_is_rejected():
+    class _WrongSourceSprintTen(_HistoricalSprintTen):
+        def execute(self, request):
+            results = super().execute(request)
+            wrong_source = ValuationInputReference(
+                "FINANCIAL_LINE",
+                32,
+                2,
+                1,
+                request.as_of,
+                parent_record_id=42,
+                financial_item_code="EPS",
+                financial_period="FY",
+                period_end=date(request.as_of.year - 1, 12, 31),
+            )
+            wrong_source_results = []
+            for row in results:
+                updated = dict(vars(row))
+                updated["valuation_input_references"] = tuple(
+                    reference
+                    for reference in row.valuation_input_references
+                    if reference.record_type != "FINANCIAL_LINE"
+                ) + (wrong_source,)
+                wrong_source_results.append(SimpleNamespace(**updated))
+            return tuple(wrong_source_results)
+
+    with pytest.raises(
+        DomainValidationError,
+        match="Generated normalized earnings source references",
+    ):
+        _run_normalized_percentile([], normalized_calculator=_WrongSourceSprintTen())
+
+
+def test_unselected_request_does_not_choose_between_cached_source_sets():
+    day = date(2026, 4, 17)
+    cutoff = datetime(2026, 4, 17, 16, tzinfo=UTC)
+    exact = _cached_normalized_result(60, day, cutoff, (1,))
+    other = _cached_normalized_result(61, day, cutoff, (2,))
+    with pytest.raises(DomainValidationError, match="multiple source sets"):
+        _run_normalized_percentile([exact, other], financial_source_id=None)
+
+
 def test_multiple_source_series_require_and_obey_explicit_source_selection():
     days = tuple(date(2026, 4, n) for n in range(1, 21))
     snapshots = []

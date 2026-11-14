@@ -63,15 +63,20 @@ post-date the valuation observation. `collected_at` is never used to decide
 historical visibility.
 
 For normalized multiples, the engine first looks for a Sprint 10 result with
-the exact historical valuation cutoff and requested normalization configuration.
-If one is absent, it assembles market and financial inputs for that historical
-date through `BuildValuationInputs`, then invokes `CalculateNormalizedEarnings`
-with that same cutoff and source policy. Sprint 10 therefore chooses only
-financial revisions visible at the historical cutoff. Results and the
-percentile snapshot participate in the caller's transaction; the engine does
-not commit. Repeated calculations append new snapshots and do not rewrite old
-results. If no base valuation snapshot exists for a date, that date does not
-provide a normalized sample.
+the exact historical valuation cutoff, metric, normalization configuration,
+financial source set, and market source set. A different-source, mixed-source,
+or source-metadata-missing result is not reusable; the engine rebuilds from
+`BuildValuationInputs` and `CalculateNormalizedEarnings` for the requested
+sources at that same historical cutoff. If no financial source is selected,
+cached results must satisfy the deterministic single-source policy and match a
+single source carried by the base valuation snapshot when available. The engine
+does not choose among multiple cached financial source sets. Generated input
+references are source-validated before they can contribute to the percentile.
+Sprint 10 therefore chooses only financial revisions visible at the historical
+cutoff. Results and the percentile snapshot participate in the caller's
+transaction; the engine does not commit. Repeated calculations append new
+snapshots and do not rewrite old results. If no base valuation snapshot exists
+for a date, that date does not provide a normalized sample.
 
 ## Invalid observations and comparability
 

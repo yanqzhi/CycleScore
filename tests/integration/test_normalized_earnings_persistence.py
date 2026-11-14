@@ -1,13 +1,24 @@
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
 from cyclescope.application.dto.normalized_earnings import NormalizedEarningsRequest
+from cyclescope.application.dto.valuation import ValuationInputRequest
+from cyclescope.application.dto.valuation_percentile import (
+    HistoricalValuationPercentileRequest,
+)
 from cyclescope.application.use_cases.financial_data import GetFinancialStatements
+from cyclescope.application.use_cases.market_data_access import MarketDataAccess
 from cyclescope.application.use_cases.normalized_earnings import (
     CalculateNormalizedEarnings,
+)
+from cyclescope.application.use_cases.valuation import CalculateValuationMetrics
+from cyclescope.application.use_cases.valuation_inputs import BuildValuationInputs
+from cyclescope.application.use_cases.valuation_percentile import (
+    CalculateHistoricalValuationPercentile,
 )
 from cyclescope.domain.entities.financial_data import FinancialItem
 from cyclescope.domain.entities.normalized_earnings import (
@@ -18,17 +29,20 @@ from cyclescope.domain.entities.normalized_earnings import (
 from cyclescope.domain.entities.valuation import (
     ValuationInputReference,
     ValuationInputs,
+    ValuationMetricCode,
 )
 from cyclescope.domain.entities.valuation_percentile import (
     PercentileConfidence,
     PercentileMethod,
     PercentileMetric,
     PercentileObservationAudit,
+    PercentilePolicy,
     ValuationLookbackPeriod,
     ValuationPercentileResult,
     ValuationPercentileStatus,
 )
 from cyclescope.domain.exceptions import DomainValidationError
+from cyclescope.domain.services.valuation import default_metric_definitions
 from cyclescope.domain.value_objects.financial_data import StatementType, UnitDimension
 from cyclescope.infrastructure.database.models import (
     CompanyModel,
@@ -43,8 +57,15 @@ from cyclescope.infrastructure.database.repositories.financial_data import (
     SQLAlchemyFinancialStatementItemRepository,
     SQLAlchemyFinancialStatementRepository,
 )
+from cyclescope.infrastructure.database.repositories.market_data import (
+    SQLAlchemyDailyPriceRepository,
+)
 from cyclescope.infrastructure.database.repositories.normalized_earnings import (
     SQLAlchemyNormalizedEarningsRepository,
+)
+from cyclescope.infrastructure.database.repositories.valuation import (
+    SQLAlchemyValuationMetricRepository,
+    SQLAlchemyValuationMetricValueRepository,
 )
 from cyclescope.infrastructure.database.repositories.valuation_percentile import (
     SQLAlchemyValuationPercentileRepository,
@@ -232,6 +253,18 @@ def test_normalized_earnings_are_pit_auditable_and_append_only(session):
         revision=2,
         available_at=AS_OF + timedelta(days=1),
     )
+    for year, (net_income, eps, op, da) in annual_values.items():
+        if year < 2025:
+            add_statement(
+                year,
+                secondary,
+                {
+                    "NET_INCOME": str(Decimal(net_income) * Decimal("1.5")),
+                    "EPS": str(Decimal(eps) * Decimal("1.5")),
+                    "OPERATING_PROFIT": str(Decimal(op) * Decimal("1.5")),
+                    "DEPRECIATION_AMORTIZATION": da,
+                },
+            )
     add_statement(
         2025,
         secondary,
@@ -319,14 +352,11 @@ def test_normalized_earnings_are_pit_auditable_and_append_only(session):
         input_references=tuple(valuation_refs),
     )
     result_repo = SQLAlchemyNormalizedEarningsRepository(session)
-    calculator = CalculateNormalizedEarnings(
-        GetFinancialStatements(
-            SQLAlchemyFinancialStatementRepository(session),
-            SQLAlchemyFinancialStatementItemRepository(session),
-        ),
-        items,
-        result_repo,
+    financial_query = GetFinancialStatements(
+        SQLAlchemyFinancialStatementRepository(session),
+        SQLAlchemyFinancialStatementItemRepository(session),
     )
+    calculator = CalculateNormalizedEarnings(financial_query, items, result_repo)
     request = NormalizedEarningsRequest(
         company_id=company.id,
         security_id=security.id,
@@ -337,6 +367,142 @@ def test_normalized_earnings_are_pit_auditable_and_append_only(session):
         source_id=source.id,
         valuation_inputs=valuation_inputs,
     )
+
+    # Seed only an alternate-source normalized cache at the historical cutoff.
+    historical_as_of = AS_OF - timedelta(minutes=30)
+    historical_price_reference = valuation_refs[0]
+    cache_inputs = replace(
+        valuation_inputs,
+        as_of=historical_as_of,
+        financial_statement_ids=(),
+        financial_source_ids=(),
+        input_references=(historical_price_reference,),
+    )
+    alternate_cache = calculator.execute(
+        NormalizedEarningsRequest(
+            company_id=company.id,
+            security_id=security.id,
+            as_of=historical_as_of,
+            window_years=5,
+            method=NormalizationMethod.ARITHMETIC_MEAN,
+            da_sign_convention=DepreciationAmortizationSignConvention.POSITIVE_EXPENSE,
+            source_id=secondary.id,
+            valuation_inputs=cache_inputs,
+        )
+    )
+    cached_eps = next(
+        row for row in alternate_cache if row.metric == EarningsMetric.EPS
+    )
+    cached_ebitda = next(
+        row for row in alternate_cache if row.metric == EarningsMetric.EBITDA
+    )
+    assert cached_eps.as_of == cached_ebitda.as_of == historical_as_of
+    assert {
+        ref.source_id
+        for ref in cached_eps.valuation_input_references
+        if ref.record_type == "FINANCIAL_LINE"
+    } == {secondary.id}
+
+    class _SecurityLookup:
+        def get_by_id(self, security_id):
+            return SimpleNamespace(id=security_id, company_id=company.id)
+
+    class _NoFx:
+        pass
+
+    class _Calendar:
+        def expected_sessions(self, calendar_id, start_date, end_date):
+            return (AS_OF.date(),)
+
+    class _Listings:
+        def list_by_security(self, security_id):
+            return []
+
+    input_builder = BuildValuationInputs(
+        _SecurityLookup(),
+        items,
+        financial_query,
+        MarketDataAccess(SQLAlchemyDailyPriceRepository(session), _NoFx()),
+    )
+    historical_inputs = input_builder.execute(
+        ValuationInputRequest(
+            security_id=security.id,
+            valuation_date=AS_OF.date(),
+            as_of=historical_as_of,
+            financial_source_id=source.id,
+            market_source_id=source.id,
+        )
+    )
+    metric_repository = SQLAlchemyValuationMetricRepository(session)
+    for definition in default_metric_definitions():
+        metric_repository.create(definition)
+    valuation_repository = SQLAlchemyValuationMetricValueRepository(session)
+    base_values = CalculateValuationMetrics(
+        metric_repository, valuation_repository
+    ).execute(
+        historical_inputs,
+        (ValuationMetricCode.PER, ValuationMetricCode.EV_EBITDA),
+    )
+    assert all(row.as_of == historical_as_of for row in base_values)
+
+    percentile_repository = SQLAlchemyValuationPercentileRepository(session)
+    historical_percentiles = CalculateHistoricalValuationPercentile(
+        _SecurityLookup(),
+        _Listings(),
+        valuation_repository,
+        result_repo,
+        percentile_repository,
+        _Calendar(),
+        input_builder,
+        calculator,
+    )
+    for percentile_metric, earnings_metric, existing_cache in (
+        (PercentileMetric.NORMALIZED_PER, EarningsMetric.EPS, cached_eps),
+        (
+            PercentileMetric.NORMALIZED_EV_EBITDA,
+            EarningsMetric.EBITDA,
+            cached_ebitda,
+        ),
+    ):
+        transaction = session.begin_nested()
+        percentile = historical_percentiles.execute(
+            HistoricalValuationPercentileRequest(
+                security_id=security.id,
+                metric=percentile_metric,
+                lookback_period=ValuationLookbackPeriod.THREE_YEARS,
+                as_of=AS_OF,
+                calendar_id="TEST",
+                financial_source_id=source.id,
+                market_source_id=source.id,
+                normalization_window_years=5,
+                normalization_method=NormalizationMethod.ARITHMETIC_MEAN,
+                da_sign_convention=DepreciationAmortizationSignConvention.POSITIVE_EXPENSE,
+                policy=PercentilePolicy(1, 2, 3, Decimal("0.5")),
+            )
+        ).result
+        assert percentile.id is not None
+        assert percentile.valid_observations == 1
+        audit = percentile_repository.get_by_id(percentile.id)
+        assert audit is not None
+        assert len(audit.observations) == 1
+        rebuilt_id = audit.observations[0].normalized_earnings_result_id
+        assert rebuilt_id is not None and rebuilt_id != existing_cache.id
+        rebuilt = result_repo.get_by_id(rebuilt_id)
+        assert rebuilt is not None
+        assert rebuilt.metric == earnings_metric
+        assert rebuilt.as_of == historical_as_of
+        assert {
+            ref.source_id
+            for ref in rebuilt.valuation_input_references
+            if ref.record_type == "FINANCIAL_LINE"
+        } == {source.id}
+        assert result_repo.get_by_id(existing_cache.id or 0) == existing_cache
+        transaction.rollback()
+        session.expire_all()
+        assert percentile_repository.get_by_id(percentile.id) is None
+        assert result_repo.get_by_id(rebuilt_id) is None
+        assert result_repo.get_by_id(existing_cache.id or 0) == existing_cache
+
     calculated = calculator.execute(request)
     by_metric = {row.metric: row for row in calculated}
     assert by_metric[EarningsMetric.NET_INCOME].normalized_value == Decimal("11")
@@ -431,15 +597,15 @@ def test_normalized_earnings_are_pit_auditable_and_append_only(session):
         restored_percentile.observations[0].references
         == normalized_eps.valuation_input_references
     )
-    assert len(result_repo.list_by_company(company.id, metric=EarningsMetric.EPS)) == 1
+    assert len(result_repo.list_by_company(company.id, metric=EarningsMetric.EPS)) == 2
     again = calculator.execute(request)
     assert again[0].id != calculated[0].id
-    assert len(result_repo.list_by_company(company.id, metric=EarningsMetric.EPS)) == 2
+    assert len(result_repo.list_by_company(company.id, metric=EarningsMetric.EPS)) == 3
 
     nested = session.begin_nested()
     calculator.execute(request)
     nested.rollback()
-    assert len(result_repo.list_by_company(company.id, metric=EarningsMetric.EPS)) == 2
+    assert len(result_repo.list_by_company(company.id, metric=EarningsMetric.EPS)) == 3
     with pytest.raises(DomainValidationError, match="source_id is required"):
         calculator.execute(
             NormalizedEarningsRequest(
@@ -466,5 +632,5 @@ def test_normalized_earnings_are_pit_auditable_and_append_only(session):
         )
     )
     transaction.rollback()
-    assert len(result_repo.list_by_company(company.id, metric=EarningsMetric.EPS)) == 2
+    assert len(result_repo.list_by_company(company.id, metric=EarningsMetric.EPS)) == 3
     assert len(percentile_repository.list_by_security(security.id)) == 1
