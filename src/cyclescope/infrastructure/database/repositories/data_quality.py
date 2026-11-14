@@ -8,7 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cyclescope.application.interfaces.data_quality import DataQualityRepository
-from cyclescope.domain.entities.data_quality import DataAnomaly, DataQualityReport
+from cyclescope.domain.entities.data_quality import (
+    DataAnomaly,
+    DataAnomalyLifecycleEvent,
+    DataQualityReport,
+)
 from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.domain.value_objects.data_quality import (
     AnomalySeverity,
@@ -22,6 +26,7 @@ from cyclescope.domain.value_objects.data_quality import (
     QualityStatus,
 )
 from cyclescope.infrastructure.database.models.data_quality import (
+    DataAnomalyLifecycleEventModel,
     DataAnomalyModel,
     DataQualityReportModel,
 )
@@ -217,6 +222,66 @@ class SQLAlchemyDataQualityRepository(DataQualityRepository):
         row.resolved_at = anomaly.resolved_at
         self._session.flush()
         return _anomaly_entity(row)
+
+    def transition_anomaly(
+        self, anomaly: DataAnomaly, event: DataAnomalyLifecycleEvent
+    ) -> DataAnomaly:
+        if anomaly.id is None or event.anomaly_id != anomaly.id:
+            raise DomainValidationError("Lifecycle event must match persisted anomaly.")
+        with self._session.begin_nested():
+            row = self._session.get(DataAnomalyModel, anomaly.id)
+            if row is None:
+                raise DomainValidationError("Anomaly does not exist.")
+            current = _anomaly_entity(row)
+            if (
+                event.previous_status != current.status
+                or event.new_status != anomaly.status
+                or event.previous_status == event.new_status
+            ):
+                raise DomainValidationError(
+                    "Lifecycle event does not match transition."
+                )
+            static_current = replace(
+                current, status=anomaly.status, resolved_at=anomaly.resolved_at
+            )
+            if static_current != anomaly:
+                raise DomainValidationError("Anomaly detection history is immutable.")
+            if current.status in (AnomalyStatus.RESOLVED, AnomalyStatus.FALSE_POSITIVE):
+                raise DomainValidationError("Terminal anomalies cannot be modified.")
+            row.status = anomaly.status.value
+            row.resolved_at = anomaly.resolved_at
+            self._session.add(
+                DataAnomalyLifecycleEventModel(
+                    anomaly_id=event.anomaly_id,
+                    previous_status=event.previous_status.value,
+                    new_status=event.new_status.value,
+                    transitioned_at=event.transitioned_at,
+                    actor=event.actor,
+                )
+            )
+            self._session.flush()
+            return _anomaly_entity(row)
+
+    def list_anomaly_events(self, anomaly_id: int) -> list[DataAnomalyLifecycleEvent]:
+        rows = self._session.scalars(
+            select(DataAnomalyLifecycleEventModel)
+            .where(DataAnomalyLifecycleEventModel.anomaly_id == anomaly_id)
+            .order_by(
+                DataAnomalyLifecycleEventModel.transitioned_at,
+                DataAnomalyLifecycleEventModel.id,
+            )
+        )
+        return [
+            DataAnomalyLifecycleEvent(
+                anomaly_id=row.anomaly_id,
+                previous_status=AnomalyStatus(row.previous_status),
+                new_status=AnomalyStatus(row.new_status),
+                transitioned_at=_utc(row.transitioned_at),  # type: ignore[arg-type]
+                actor=row.actor,
+                id=row.id,
+            )
+            for row in rows
+        ]
 
     def list_anomalies(self, *, report_id: int | None = None) -> list[DataAnomaly]:
         statement = select(DataAnomalyModel).order_by(

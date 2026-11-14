@@ -74,9 +74,16 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
             ).scalar_one()
-            == "0008_market_data_quality"
+            == "0009_anomaly_lifecycle_events"
         )
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+        assert (
+            connection.exec_driver_sql(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='data_anomaly_lifecycle_events'"
+            ).scalar_one()
+            == "data_anomaly_lifecycle_events"
+        )
     engine.dispose()
 
 

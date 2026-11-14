@@ -1,6 +1,6 @@
 """Application orchestration for quality reports and anomaly lifecycle."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from cyclescope.application.dto.data_quality import (
     FxQualityRequest,
@@ -14,7 +14,10 @@ from cyclescope.application.interfaces.data_quality import (
 from cyclescope.application.use_cases.market_data_quality import (
     MarketDataQualityAssessor,
 )
-from cyclescope.domain.entities.data_quality import DataAnomaly
+from cyclescope.domain.entities.data_quality import (
+    DataAnomaly,
+    DataAnomalyLifecycleEvent,
+)
 from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.domain.repositories.contracts import (
     DailyPriceRepository,
@@ -41,7 +44,9 @@ class AssessDailyPriceQuality:
         self._assessor = MarketDataQualityAssessor(config)
 
     def execute(self, request: PriceQualityRequest) -> QualityAssessmentResult:
-        period = MarketDataPeriod(request.start_date, request.end_date)
+        # Include all prior eligible history so the assessor can use the prior
+        # close and rolling-volume observations without expanding report scope.
+        period = MarketDataPeriod(date.min, request.end_date)
         records = self._market.get_by_security_and_period(
             request.security_id, period, request.as_of, request.source_id
         )
@@ -67,7 +72,7 @@ class AssessFxRateQuality:
 
     def execute(self, request: FxQualityRequest) -> QualityAssessmentResult:
         pair = CurrencyPair(request.base_currency, request.quote_currency)
-        period = MarketDataPeriod(request.start_date, request.end_date)
+        period = MarketDataPeriod(date.min, request.end_date)
         records = self._market.get_by_pair_and_period(
             pair, period, request.as_of, request.source_id
         )
@@ -83,7 +88,12 @@ class ManageMarketDataAnomaly:
         self._repository = repository
 
     def transition(
-        self, anomaly_id: int, status: AnomalyStatus, at: datetime
+        self,
+        anomaly_id: int,
+        status: AnomalyStatus,
+        at: datetime,
+        *,
+        actor: str | None = None,
     ) -> DataAnomaly:
         if at.tzinfo is None or at.utcoffset() is None:
             raise DomainValidationError(
@@ -92,6 +102,15 @@ class ManageMarketDataAnomaly:
         current = self._repository.get_anomaly(anomaly_id)
         if current is None:
             raise DomainValidationError("Anomaly does not exist.")
-        return self._repository.update_anomaly(
-            current.transition(status, at.astimezone(UTC))
+        transitioned_at = at.astimezone(UTC)
+        updated = current.transition(status, transitioned_at)
+        return self._repository.transition_anomaly(
+            updated,
+            DataAnomalyLifecycleEvent(
+                anomaly_id=anomaly_id,
+                previous_status=current.status,
+                new_status=status,
+                transitioned_at=transitioned_at,
+                actor=actor,
+            ),
         )

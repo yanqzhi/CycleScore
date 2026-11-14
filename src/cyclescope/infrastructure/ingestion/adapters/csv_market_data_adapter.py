@@ -130,7 +130,7 @@ class DailyPriceCsvValidator:
     def validate(self, records: Sequence[object]) -> ValidationResult[DailyPrice]:
         valid: list[DailyPrice] = []
         rejected: list[RejectedRecord[object]] = []
-        seen: set[tuple[int, object, int, int]] = set()
+        seen: dict[tuple[int, object, int, int], DailyPrice] = {}
         for item in records:
             record = cast(RawDailyPriceRecord, item)
             try:
@@ -141,9 +141,47 @@ class DailyPriceCsvValidator:
                     entity.source_id,
                     entity.revision_number,
                 )
-                if key in seen:
-                    raise ValueError("Duplicate price record in CSV input.")
-                seen.add(key)
+                previous = seen.get(key)
+                if previous is not None:
+                    same_values = (
+                        entity.open,
+                        entity.high,
+                        entity.low,
+                        entity.close,
+                        entity.adjusted_close,
+                        entity.volume,
+                        entity.currency,
+                        entity.publication_date,
+                        entity.available_at,
+                    ) == (
+                        previous.open,
+                        previous.high,
+                        previous.low,
+                        previous.close,
+                        previous.adjusted_close,
+                        previous.volume,
+                        previous.currency,
+                        previous.publication_date,
+                        previous.available_at,
+                    )
+                    code = (
+                        IngestionErrorCode.DUPLICATE_RECORD
+                        if same_values
+                        else IngestionErrorCode.DUPLICATE_CONFLICT
+                    )
+                    message = (
+                        "Exact duplicate price natural key in CSV input."
+                        if same_values
+                        else "Conflicting values for duplicate price natural key."
+                    )
+                    rejected.append(
+                        RejectedRecord(
+                            cast(object, record),
+                            (PipelineIssue(code, message, f"row:{record.row_number}"),),
+                        )
+                    )
+                    continue
+                seen[key] = entity
                 valid.append(entity)
             except (ValueError, TypeError) as exc:
                 rejected.append(
@@ -170,7 +208,7 @@ class FxRateCsvValidator:
     def validate(self, records: Sequence[object]) -> ValidationResult[FxRate]:
         valid: list[FxRate] = []
         rejected: list[RejectedRecord[object]] = []
-        seen: set[tuple[str, str, object, int, int]] = set()
+        seen: dict[tuple[str, str, object, int, int], FxRate] = {}
         for item in records:
             record = cast(RawFxRateRecord, item)
             try:
@@ -182,9 +220,35 @@ class FxRateCsvValidator:
                     entity.source_id,
                     entity.revision_number,
                 )
-                if key in seen:
-                    raise ValueError("Duplicate FX record in CSV input.")
-                seen.add(key)
+                previous = seen.get(key)
+                if previous is not None:
+                    same_values = (
+                        entity.rate,
+                        entity.publication_date,
+                        entity.available_at,
+                    ) == (
+                        previous.rate,
+                        previous.publication_date,
+                        previous.available_at,
+                    )
+                    code = (
+                        IngestionErrorCode.DUPLICATE_RECORD
+                        if same_values
+                        else IngestionErrorCode.DUPLICATE_CONFLICT
+                    )
+                    message = (
+                        "Exact duplicate FX natural key in CSV input."
+                        if same_values
+                        else "Conflicting values for duplicate FX natural key."
+                    )
+                    rejected.append(
+                        RejectedRecord(
+                            record,
+                            (PipelineIssue(code, message, f"row:{record.row_number}"),),
+                        )
+                    )
+                    continue
+                seen[key] = entity
                 valid.append(entity)
             except (ValueError, TypeError) as exc:
                 rejected.append(

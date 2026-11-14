@@ -4,7 +4,11 @@ from abc import ABC, abstractmethod
 from datetime import date
 from typing import Protocol
 
-from cyclescope.domain.entities.data_quality import DataAnomaly, DataQualityReport
+from cyclescope.domain.entities.data_quality import (
+    DataAnomaly,
+    DataAnomalyLifecycleEvent,
+    DataQualityReport,
+)
 
 
 class TradingCalendar(Protocol):
@@ -29,6 +33,16 @@ class DataQualityRepository(ABC):
 
     @abstractmethod
     def update_anomaly(self, anomaly: DataAnomaly) -> DataAnomaly: ...
+
+    @abstractmethod
+    def transition_anomaly(
+        self, anomaly: DataAnomaly, event: DataAnomalyLifecycleEvent
+    ) -> DataAnomaly: ...
+
+    @abstractmethod
+    def list_anomaly_events(
+        self, anomaly_id: int
+    ) -> list[DataAnomalyLifecycleEvent]: ...
 
     @abstractmethod
     def list_anomalies(self, *, report_id: int | None = None) -> list[DataAnomaly]: ...

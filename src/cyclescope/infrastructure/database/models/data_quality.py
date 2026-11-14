@@ -142,3 +142,32 @@ class DataAnomalyModel(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     explanation: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class DataAnomalyLifecycleEventModel(Base):
+    __tablename__ = "data_anomaly_lifecycle_events"
+    __table_args__ = (
+        CheckConstraint(
+            "previous_status <> new_status", name="anomaly_event_status_changed"
+        ),
+        CheckConstraint(
+            "previous_status IN ('OPEN','ACKNOWLEDGED','RESOLVED','FALSE_POSITIVE')",
+            name="anomaly_event_previous_status_valid",
+        ),
+        CheckConstraint(
+            "new_status IN ('OPEN','ACKNOWLEDGED','RESOLVED','FALSE_POSITIVE')",
+            name="anomaly_event_new_status_valid",
+        ),
+        Index("ix_anomaly_lifecycle_anomaly_time", "anomaly_id", "transitioned_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    anomaly_id: Mapped[int] = mapped_column(
+        ForeignKey("data_anomalies.id", ondelete="RESTRICT"), nullable=False
+    )
+    previous_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    new_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    transitioned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    actor: Mapped[str | None] = mapped_column(String(255))

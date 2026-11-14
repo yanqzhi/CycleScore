@@ -161,6 +161,150 @@ def test_price_move_and_volume_outlier_are_candidates_not_corrections():
     ) + (Decimal("16"),)
 
 
+def test_configured_weights_are_used_and_snapshotted_exactly():
+    sessions = tuple(date(2025, 12, 31) + timedelta(days=i) for i in range(6))
+    rows = (
+        *(price(day, "10") for day in sessions[:-1]),
+        price(sessions[-1], "10"),
+        price(sessions[-1], "11"),
+    )
+    weights = (
+        ("completeness", Decimal("0.60")),
+        ("structural_validity", Decimal("0.10")),
+        ("consistency", Decimal("0.10")),
+        ("outlier_assessment", Decimal("0.10")),
+        ("provenance", Decimal("0.10")),
+    )
+    config = DataQualityConfig(weights=weights)
+    request = PriceQualityRequest(10, sessions[-1], sessions[-1], 1, AS_OF, 7)
+    result = MarketDataQualityAssessor(config).assess_prices(
+        request, rows, Calendar(), detected_at=NOW
+    )
+    component_scores = {item.name: item.score for item in result.report.components}
+    expected = sum(
+        (component_scores[name] * weight for name, weight in weights), Decimal(0)
+    )
+    assert result.report.score == expected
+    assert result.report.score != Decimal("100")
+    snapshot = dict(result.report.config_snapshot)
+    assert {name: Decimal(snapshot[f"weight.{name}"]) for name, _ in weights} == dict(
+        weights
+    )
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ("duplicate", "unique"),
+        ("missing", "Missing"),
+        ("unknown", "Unknown"),
+        ("negative", "non-negative"),
+        ("nan", "finite"),
+        ("infinity", "finite"),
+        ("sum", "sum exactly"),
+    ],
+)
+def test_invalid_quality_weights_are_rejected(change, message):
+    weights = list(DataQualityConfig().weights)
+    if change == "duplicate":
+        weights[-1] = weights[0]
+    elif change == "missing":
+        weights.pop()
+    elif change == "unknown":
+        weights[-1] = ("unknown", weights[-1][1])
+    elif change == "negative":
+        weights[0] = (weights[0][0], Decimal("-0.1"))
+        weights[-1] = (weights[-1][0], Decimal("0.5"))
+    elif change == "nan":
+        weights[0] = (weights[0][0], Decimal("NaN"))
+    elif change == "infinity":
+        weights[0] = (weights[0][0], Decimal("Infinity"))
+    elif change == "sum":
+        weights[0] = (weights[0][0], Decimal("0.2"))
+    with pytest.raises(DomainValidationError, match=message):
+        DataQualityConfig(weights=tuple(weights))
+
+
+def test_unavailable_component_remains_unscored_and_no_weight_is_redistributed():
+    request = PriceQualityRequest(
+        10, date(2026, 1, 5), date(2026, 1, 5), 1, AS_OF, None
+    )
+    result = MarketDataQualityAssessor().assess_prices(
+        request, (price(date(2026, 1, 5), "10"),), Calendar(), detected_at=NOW
+    )
+    component = next(
+        item for item in result.report.components if item.name == "completeness"
+    )
+    assert component.score is None and component.weight == Decimal("0.30")
+    assert result.report.score is None
+    assert result.report.status == QualityStatus.INSUFFICIENT_DATA
+
+
+def test_price_outlier_uses_pre_report_history_without_reporting_it():
+    report_start = date(2026, 1, 30)
+    history = [
+        price(report_start - timedelta(days=offset), "10", volume=100)
+        for offset in range(20, 0, -1)
+    ]
+    first_report_day = price(report_start, "20", volume=1000)
+    later_future = price(report_start + timedelta(days=1), "1000", volume=100000)
+    request = PriceQualityRequest(10, report_start, report_start, 1, AS_OF, 7)
+    result = MarketDataQualityAssessor().assess_prices(
+        request, (*history, first_report_day, later_future), Calendar(), detected_at=NOW
+    )
+    kinds = [item.anomaly_type for item in result.anomalies]
+    assert kinds.count(AnomalyType.PRICE_MOVE) == 1
+    assert kinds.count(AnomalyType.ABNORMAL_VOLUME) == 1
+    assert result.report.available_records == 1
+    assert result.report.first_available_date == report_start
+    assert result.report.last_available_date == report_start
+    assert all(item.observation_date == report_start for item in result.anomalies)
+
+
+def test_volume_baseline_uses_the_twenty_preceding_observations():
+    report_start = date(2026, 1, 30)
+    history = [
+        price(
+            report_start - timedelta(days=offset),
+            "10",
+            volume=1000 if offset > 5 else 100,
+        )
+        for offset in range(20, 0, -1)
+    ]
+    report_row = price(report_start, "10", volume=600)
+    request = PriceQualityRequest(10, report_start, report_start, 1, AS_OF, 7)
+    result = MarketDataQualityAssessor().assess_prices(
+        request, (*history, report_row), Calendar(), detected_at=NOW
+    )
+    assert not any(
+        item.anomaly_type == AnomalyType.ABNORMAL_VOLUME for item in result.anomalies
+    )
+
+
+def test_price_outlier_excludes_history_unavailable_at_as_of_and_future_rows():
+    report_start = date(2026, 1, 30)
+    prior = price(report_start - timedelta(days=1), "10", volume=100)
+    prior = __import__("dataclasses").replace(
+        prior, available_at=AS_OF + timedelta(seconds=1)
+    )
+    rows = [
+        price(report_start + timedelta(days=offset), "10", volume=100)
+        for offset in range(6)
+    ]
+    future = price(report_start + timedelta(days=6), "100", volume=100000)
+    request = PriceQualityRequest(
+        10, report_start, report_start + timedelta(days=5), 1, AS_OF, 7
+    )
+    result = MarketDataQualityAssessor().assess_prices(
+        request, (prior, *rows, future), Calendar(), detected_at=NOW
+    )
+    assert not any(
+        item.anomaly_type in (AnomalyType.PRICE_MOVE, AnomalyType.ABNORMAL_VOLUME)
+        and item.observation_date == report_start
+        for item in result.anomalies
+    )
+
+
 def test_fx_move_and_duplicate_detection_keep_sources_separate():
     assessor = MarketDataQualityAssessor()
     first = fx(date(2026, 1, 5), "150")
@@ -199,7 +343,7 @@ def test_anomaly_lifecycle_is_explicit_and_terminal():
     with pytest.raises(DomainValidationError, match="Terminal"):
         resolved.transition(AnomalyStatus.FALSE_POSITIVE, NOW + timedelta(hours=2))
     with pytest.raises(DomainValidationError, match="back to OPEN"):
-        anomaly.transition(AnomalyStatus.OPEN, NOW)
+        acknowledged.transition(AnomalyStatus.OPEN, NOW)
 
 
 def test_unknown_calendar_type_is_rejected_by_concrete_calendar():

@@ -237,6 +237,7 @@ def test_csv_record_validator_rejects_wrong_pair_and_duplicate_rows(
     path.write_text(
         "base_currency,quote_currency,date,rate\n"
         "USD,JPY,2026-05-14,155.25\n"
+        "USD,JPY,2026-05-14,155.25\n"
         "USD,JPY,2026-05-14,156.25\n"
         "EUR,JPY,2026-05-15,170.1\n",
         encoding="utf-8",
@@ -250,8 +251,17 @@ def test_csv_record_validator_rejects_wrong_pair_and_duplicate_rows(
     context = FxRateIngestionContext("USD", "JPY", source_id, NOW, NOW, 1)
     result = pipeline.import_fx(_request(source_id, FX_DAILY_DATASET), context)
     assert result.run.status == IngestionStatus.PARTIAL
-    assert result.run.accepted_count == 1 and result.run.rejected_count == 2
-    assert result.errors[0].code == IngestionErrorCode.DUPLICATE_RECORD
+    assert result.run.accepted_count == 1 and result.run.rejected_count == 3
+    assert [issue.code for issue in result.errors] == [
+        IngestionErrorCode.DUPLICATE_RECORD,
+        IngestionErrorCode.DUPLICATE_CONFLICT,
+        IngestionErrorCode.VALIDATION_FAILED,
+    ]
+    assert [issue.source_location for issue in result.errors] == [
+        "row:3",
+        "row:4",
+        "row:5",
+    ]
 
 
 def test_run_rejects_completion_before_start():

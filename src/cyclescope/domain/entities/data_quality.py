@@ -150,6 +150,8 @@ class DataAnomaly:
             raise DomainValidationError("Terminal anomalies cannot change status.")
         if status == AnomalyStatus.OPEN:
             raise DomainValidationError("Anomaly cannot transition back to OPEN.")
+        if status == self.status:
+            raise DomainValidationError("Anomaly status must change during transition.")
         resolved_at = (
             _utc("resolved_at", at)
             if status
@@ -162,3 +164,33 @@ class DataAnomaly:
         from dataclasses import replace
 
         return replace(self, status=status, resolved_at=resolved_at)
+
+
+@dataclass(frozen=True, slots=True)
+class DataAnomalyLifecycleEvent:
+    anomaly_id: int
+    previous_status: AnomalyStatus
+    new_status: AnomalyStatus
+    transitioned_at: datetime
+    actor: str | None = None
+    id: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.anomaly_id < 1:
+            raise DomainValidationError("Lifecycle event anomaly ID must be positive.")
+        object.__setattr__(
+            self, "transitioned_at", _utc("transitioned_at", self.transitioned_at)
+        )
+        if self.previous_status == self.new_status:
+            raise DomainValidationError("Lifecycle events require a status change.")
+        if self.previous_status in (
+            AnomalyStatus.RESOLVED,
+            AnomalyStatus.FALSE_POSITIVE,
+        ):
+            raise DomainValidationError(
+                "Terminal anomaly lifecycle events are invalid."
+            )
+        if self.new_status == AnomalyStatus.OPEN:
+            raise DomainValidationError("Anomaly lifecycle cannot transition to OPEN.")
+        if self.actor is not None and not self.actor.strip():
+            raise DomainValidationError("Lifecycle event actor must be non-empty.")

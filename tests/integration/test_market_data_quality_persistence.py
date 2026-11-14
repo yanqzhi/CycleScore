@@ -37,6 +37,7 @@ from cyclescope.infrastructure.database.models import (
     SecurityModel,
 )
 from cyclescope.infrastructure.database.models.data_quality import (
+    DataAnomalyLifecycleEventModel,
     DataAnomalyModel,
     DataQualityReportModel,
 )
@@ -127,16 +128,32 @@ def test_quality_report_and_missing_anomaly_persist_and_transition(session):
     assert len(quality.list_anomalies(report_id=result.report.id)) == 1
 
     updated = ManageMarketDataAnomaly(quality).transition(
-        anomaly.id, AnomalyStatus.ACKNOWLEDGED, AS_OF + timedelta(hours=1)
+        anomaly.id,
+        AnomalyStatus.ACKNOWLEDGED,
+        AS_OF + timedelta(hours=1),
+        actor="analyst@example.test",
     )
     assert updated.status == AnomalyStatus.ACKNOWLEDGED
+    with pytest.raises(DomainValidationError, match="back to OPEN"):
+        ManageMarketDataAnomaly(quality).transition(
+            anomaly.id, AnomalyStatus.OPEN, AS_OF + timedelta(minutes=90)
+        )
+    assert len(quality.list_anomaly_events(anomaly.id)) == 1
     resolved = ManageMarketDataAnomaly(quality).transition(
         anomaly.id, AnomalyStatus.RESOLVED, AS_OF + timedelta(hours=2)
     )
     assert resolved.resolved_at == AS_OF + timedelta(hours=2)
+    events = quality.list_anomaly_events(anomaly.id)
+    assert [(item.previous_status, item.new_status) for item in events] == [
+        (AnomalyStatus.OPEN, AnomalyStatus.ACKNOWLEDGED),
+        (AnomalyStatus.ACKNOWLEDGED, AnomalyStatus.RESOLVED),
+    ]
+    assert events[0].actor == "analyst@example.test"
+    assert events[1].actor is None
     session.commit()
     stored = session.get(DataAnomalyModel, anomaly.id)
     assert stored is not None and stored.status == "RESOLVED"
+    assert session.query(DataAnomalyLifecycleEventModel).count() == 2
 
 
 def test_price_quality_score_is_calculated_with_sufficient_history(session):
@@ -158,6 +175,34 @@ def test_price_quality_score_is_calculated_with_sufficient_history(session):
     assert result.report.status.value == "PASS"
     assert result.report.coverage_ratio == Decimal("100.0000")
     assert result.report.score == Decimal("100.0000")
+
+
+def test_quality_workflow_loads_pre_report_price_history_only_for_outliers(session):
+    source_id, security_id = refs(session)
+    repository = SQLAlchemyDailyPriceRepository(session)
+    report_day = date(2026, 1, 12)
+    repository.save(
+        price(security_id, source_id, report_day - timedelta(days=1), "10", 1, AS_OF)
+    )
+    repository.save(price(security_id, source_id, report_day, "13", 1, AS_OF))
+    repository.save(
+        price(security_id, source_id, report_day + timedelta(days=1), "100", 1, AS_OF)
+    )
+    result = AssessDailyPriceQuality(
+        repository, SQLAlchemyDataQualityRepository(session), calendar()
+    ).execute(
+        PriceQualityRequest(security_id, report_day, report_day, source_id, AS_OF, 1)
+    )
+    price_moves = [
+        anomaly
+        for anomaly in result.anomalies
+        if anomaly.anomaly_type == AnomalyType.PRICE_MOVE
+    ]
+    assert len(price_moves) == 1
+    assert price_moves[0].observation_date == report_day
+    assert result.report.available_records == 1
+    assert result.report.first_available_date == report_day
+    assert result.report.last_available_date == report_day
 
 
 def test_quality_persistence_respects_caller_rollback(session):

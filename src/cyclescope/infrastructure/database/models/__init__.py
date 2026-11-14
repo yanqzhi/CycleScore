@@ -1,6 +1,7 @@
 """Database model declarations."""
 
 from cyclescope.infrastructure.database.models.data_quality import (
+    DataAnomalyLifecycleEventModel,
     DataAnomalyModel,
     DataQualityReportModel,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "FxRateModel",
     "DataQualityReportModel",
     "DataAnomalyModel",
+    "DataAnomalyLifecycleEventModel",
     "IngestionRunModel",
     "RawDataRecordModel",
     "IndustryModel",

@@ -54,10 +54,22 @@ class MarketDataQualityAssessor:
             and row.available_at <= cutoff
             and (request.source_id is None or row.source_id == request.source_id)
         )
+        history = tuple(
+            row
+            for row in records
+            if row.security_id == request.security_id
+            and row.observation_date <= request.end_date
+            and row.available_at <= cutoff
+            and (request.source_id is None or row.source_id == request.source_id)
+        )
         timestamp = _utc(detected_at or datetime.now(UTC))
         anomalies: list[DataAnomaly] = []
         anomalies.extend(self._price_duplicates(rows, timestamp))
-        anomalies.extend(self._price_outliers(rows, timestamp))
+        anomalies.extend(
+            self._price_outliers(
+                history, request.start_date, request.end_date, timestamp
+            )
+        )
         calendar_id = (
             f"EXCHANGE:{request.exchange_id}"
             if request.exchange_id is not None
@@ -86,6 +98,7 @@ class MarketDataQualityAssessor:
             records=rows,
             sessions=sessions,
             anomalies=anomalies,
+            outlier_records=history,
             security_id=request.security_id,
             detected_at=timestamp,
         )
@@ -117,9 +130,20 @@ class MarketDataQualityAssessor:
             and row.available_at <= cutoff
             and (request.source_id is None or row.source_id == request.source_id)
         )
+        history = tuple(
+            row
+            for row in records
+            if row.base_currency == base
+            and row.quote_currency == quote
+            and row.observation_date <= request.end_date
+            and row.available_at <= cutoff
+            and (request.source_id is None or row.source_id == request.source_id)
+        )
         timestamp = _utc(detected_at or datetime.now(UTC))
         anomalies = list(self._fx_duplicates(rows, timestamp))
-        anomalies.extend(self._fx_outliers(rows, timestamp))
+        anomalies.extend(
+            self._fx_outliers(history, request.start_date, request.end_date, timestamp)
+        )
         sessions = self._sessions(
             calendar, "FX" if calendar else None, request.start_date, request.end_date
         )
@@ -143,6 +167,7 @@ class MarketDataQualityAssessor:
             records=rows,
             sessions=sessions,
             anomalies=anomalies,
+            outlier_records=history,
             base_currency=base,
             quote_currency=quote,
             detected_at=timestamp,
@@ -291,7 +316,11 @@ class MarketDataQualityAssessor:
         return anomalies
 
     def _price_outliers(
-        self, rows: Sequence[DailyPrice], at: datetime
+        self,
+        rows: Sequence[DailyPrice],
+        report_start: date,
+        report_end: date,
+        at: datetime,
     ) -> list[DataAnomaly]:
         result: list[DataAnomaly] = []
         by_source: dict[int, list[DailyPrice]] = defaultdict(list)
@@ -300,7 +329,8 @@ class MarketDataQualityAssessor:
         for source_rows in by_source.values():
             source_rows.sort(key=lambda row: row.observation_date)
             for index, row in enumerate(source_rows):
-                if index and source_rows[index - 1].close > 0:
+                in_report = report_start <= row.observation_date <= report_end
+                if in_report and index and source_rows[index - 1].close > 0:
                     prior = source_rows[index - 1]
                     change = abs(row.close - prior.close) / prior.close
                     if change > self.config.price_move_threshold:
@@ -325,7 +355,7 @@ class MarketDataQualityAssessor:
                             )
                         )
                 history = source_rows[max(0, index - 20) : index]
-                if len(history) >= 5:
+                if in_report and len(history) >= 5:
                     typical = Decimal(str(median([item.volume for item in history])))
                     if (
                         typical > 0
@@ -352,7 +382,13 @@ class MarketDataQualityAssessor:
                         )
         return result
 
-    def _fx_outliers(self, rows: Sequence[FxRate], at: datetime) -> list[DataAnomaly]:
+    def _fx_outliers(
+        self,
+        rows: Sequence[FxRate],
+        report_start: date,
+        report_end: date,
+        at: datetime,
+    ) -> list[DataAnomaly]:
         result: list[DataAnomaly] = []
         by_source: dict[int, list[FxRate]] = defaultdict(list)
         for row in rows:
@@ -360,6 +396,8 @@ class MarketDataQualityAssessor:
         for source_rows in by_source.values():
             source_rows.sort(key=lambda row: row.observation_date)
             for prior, row in zip(source_rows, source_rows[1:], strict=False):
+                if not report_start <= row.observation_date <= report_end:
+                    continue
                 change = abs(row.rate - prior.rate) / prior.rate
                 if change > self.config.fx_move_threshold:
                     result.append(
@@ -392,6 +430,7 @@ class MarketDataQualityAssessor:
         records: Sequence[DailyPrice | FxRate],
         sessions: tuple[date, ...] | None,
         anomalies: Sequence[DataAnomaly],
+        outlier_records: Sequence[DailyPrice | FxRate],
         detected_at: datetime,
         security_id: int | None = None,
         base_currency: str | None = None,
@@ -402,7 +441,7 @@ class MarketDataQualityAssessor:
             completeness = QualityComponent(
                 "completeness",
                 None,
-                Decimal("0.30"),
+                self._weight("completeness"),
                 QualityComponentStatus.UNAVAILABLE,
                 "UNKNOWN_CALENDAR: no exchange-specific trading calendar is "
                 "configured.",
@@ -419,7 +458,7 @@ class MarketDataQualityAssessor:
                 completeness = QualityComponent(
                     "completeness",
                     None,
-                    Decimal("0.30"),
+                    self._weight("completeness"),
                     QualityComponentStatus.UNAVAILABLE,
                     "No expected trading sessions exist in this range "
                     "(NOT_APPLICABLE).",
@@ -431,7 +470,7 @@ class MarketDataQualityAssessor:
                 completeness = QualityComponent(
                     "completeness",
                     coverage,
-                    Decimal("0.30"),
+                    self._weight("completeness"),
                     QualityComponentStatus.PASSED
                     if missing == 0
                     else QualityComponentStatus.WARNING,
@@ -444,7 +483,7 @@ class MarketDataQualityAssessor:
         if records:
             required_history = 6 if dataset == DatasetType.DAILY_PRICE else 2
             histories: dict[int, set[date]] = defaultdict(set)
-            for record in records:
+            for record in outlier_records:
                 histories[record.source_id].add(record.observation_date)
             outliers_available = bool(histories) and all(
                 len(days) >= required_history for days in histories.values()
@@ -454,14 +493,14 @@ class MarketDataQualityAssessor:
                     QualityComponent(
                         "structural_validity",
                         Decimal(100),
-                        Decimal("0.25"),
+                        self._weight("structural_validity"),
                         QualityComponentStatus.PASSED,
                         "All supplied Domain entities passed structural validation.",
                     ),
                     QualityComponent(
                         "consistency",
                         self._consistency_score(anomalies),
-                        Decimal("0.20"),
+                        self._weight("consistency"),
                         QualityComponentStatus.WARNING
                         if any(
                             a.severity
@@ -474,7 +513,7 @@ class MarketDataQualityAssessor:
                     QualityComponent(
                         "outlier_assessment",
                         self._outlier_score(anomalies) if outliers_available else None,
-                        Decimal("0.15"),
+                        self._weight("outlier_assessment"),
                         QualityComponentStatus.UNAVAILABLE
                         if not outliers_available
                         else QualityComponentStatus.WARNING
@@ -501,7 +540,7 @@ class MarketDataQualityAssessor:
                     QualityComponent(
                         "provenance",
                         Decimal(100),
-                        Decimal("0.10"),
+                        self._weight("provenance"),
                         QualityComponentStatus.PASSED,
                         "Source, revision, available_at, and collected_at are "
                         "present on all observations.",
@@ -509,17 +548,17 @@ class MarketDataQualityAssessor:
                 )
             )
         else:
-            for name, weight in (
-                ("structural_validity", "0.25"),
-                ("consistency", "0.20"),
-                ("outlier_assessment", "0.15"),
-                ("provenance", "0.10"),
+            for name in (
+                "structural_validity",
+                "consistency",
+                "outlier_assessment",
+                "provenance",
             ):
                 components.append(
                     QualityComponent(
                         name,
                         None,
-                        Decimal(weight),
+                        self._weight(name),
                         QualityComponentStatus.UNAVAILABLE,
                         "No observations are available for assessment.",
                     )
@@ -612,6 +651,9 @@ class MarketDataQualityAssessor:
             a.anomaly_type == AnomalyType.DUPLICATE_CONFLICT for a in anomalies
         )
         return max(Decimal(0), Decimal(100 - conflicts * 20))
+
+    def _weight(self, name: str) -> Decimal:
+        return dict(self.config.weights)[name]
 
     @staticmethod
     def _outlier_score(anomalies: Sequence[DataAnomaly]) -> Decimal:

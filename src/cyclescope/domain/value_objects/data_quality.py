@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
+from typing import ClassVar
 
 from cyclescope.domain.exceptions import DomainValidationError
 
@@ -112,6 +113,14 @@ class DataQualityConfig:
         ("provenance", Decimal("0.10")),
     )
 
+    REQUIRED_COMPONENTS: ClassVar[tuple[str, ...]] = (
+        "completeness",
+        "structural_validity",
+        "consistency",
+        "outlier_assessment",
+        "provenance",
+    )
+
     def __post_init__(self) -> None:
         if not self.version.strip():
             raise DomainValidationError("Scoring configuration version is required.")
@@ -121,7 +130,25 @@ class DataQualityConfig:
             raise DomainValidationError(
                 "Volume threshold must exceed one times median."
             )
+        names = tuple(name for name, _ in self.weights)
+        if len(names) != len(set(names)):
+            raise DomainValidationError("Scoring component names must be unique.")
+        unknown = set(names) - set(self.REQUIRED_COMPONENTS)
+        missing = set(self.REQUIRED_COMPONENTS) - set(names)
+        if unknown:
+            raise DomainValidationError(
+                f"Unknown scoring components: {', '.join(sorted(unknown))}."
+            )
+        if missing:
+            raise DomainValidationError(
+                f"Missing scoring components: {', '.join(sorted(missing))}."
+            )
+        if any(
+            not isinstance(weight, Decimal) or not weight.is_finite() or weight < 0
+            for _, weight in self.weights
+        ):
+            raise DomainValidationError(
+                "Scoring weights must be finite and non-negative."
+            )
         if sum((weight for _, weight in self.weights), Decimal(0)) != Decimal(1):
             raise DomainValidationError("Scoring weights must sum exactly to 1.")
-        if any(weight < 0 for _, weight in self.weights):
-            raise DomainValidationError("Scoring weights cannot be negative.")
