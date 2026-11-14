@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -47,6 +48,22 @@ def test_per_prefers_reported_eps_and_preserves_pit_provenance():
         price_observation_id=42,
         financial_statement_ids=(8,),
         financial_source_ids=(4,),
+        input_references=(
+            ValuationInputReference(
+                "DAILY_PRICE", 42, 2, 3, NOW, observation_date=date(2026, 5, 15)
+            ),
+            ValuationInputReference(
+                "FINANCIAL_LINE",
+                8,
+                4,
+                1,
+                NOW,
+                parent_record_id=8,
+                financial_item_code="EPS",
+                financial_period="FY",
+                period_end=date(2025, 12, 31),
+            ),
+        ),
     )
     result = calculate_metric(_definition(ValuationMetricCode.PER), inputs)
     assert result.value == Decimal("15")
@@ -105,6 +122,59 @@ def test_financial_metric_calculations_and_explicit_missing_inputs():
     assert missing.value is None
     assert missing.status == ValuationResultStatus.INSUFFICIENT_DATA
     assert missing.unavailable_inputs == ("shares_outstanding",)
+
+
+@pytest.mark.parametrize("shares", [Decimal("0"), Decimal("-1")])
+@pytest.mark.parametrize("cash", [Decimal("0"), Decimal("-10")])
+def test_enterprise_value_validates_named_shares_and_allows_signed_cash(shares, cash):
+    inputs = ValuationInputs(
+        security_id=1,
+        observation_date=date(2026, 5, 15),
+        as_of=NOW,
+        currency="USD",
+        closing_price=Decimal("10"),
+        shares_outstanding=shares,
+        short_term_debt=Decimal("3"),
+        long_term_debt=Decimal("4"),
+        cash_and_equivalents=cash,
+        operating_profit=Decimal("10"),
+        depreciation_amortization=Decimal("1"),
+    )
+    result = calculate_metric(_definition(ValuationMetricCode.ENTERPRISE_VALUE), inputs)
+    ratio = calculate_metric(_definition(ValuationMetricCode.EV_EBITDA), inputs)
+    assert result.status == ValuationResultStatus.INVALID_INPUT
+    assert result.unavailable_inputs == ("shares_outstanding must be positive.",)
+    assert ratio.status == ValuationResultStatus.INVALID_INPUT
+    conflicting = calculate_metric(
+        _definition(ValuationMetricCode.EV_EBITDA),
+        replace(
+            inputs,
+            operating_profit=Decimal("-20"),
+            depreciation_amortization=Decimal("5"),
+        ),
+    )
+    assert conflicting.status == ValuationResultStatus.INVALID_INPUT
+
+
+@pytest.mark.parametrize(
+    ("cash", "expected"),
+    [(Decimal("0"), Decimal("107")), (Decimal("-10"), Decimal("117"))],
+)
+def test_enterprise_value_accepts_zero_and_negative_cash(cash, expected):
+    inputs = ValuationInputs(
+        security_id=1,
+        observation_date=date(2026, 5, 15),
+        as_of=NOW,
+        currency="USD",
+        closing_price=Decimal("10"),
+        shares_outstanding=Decimal("10"),
+        short_term_debt=Decimal("3"),
+        long_term_debt=Decimal("4"),
+        cash_and_equivalents=cash,
+    )
+    result = calculate_metric(_definition(ValuationMetricCode.ENTERPRISE_VALUE), inputs)
+    assert result.status == ValuationResultStatus.AVAILABLE
+    assert result.value == expected
 
 
 @pytest.mark.parametrize(
@@ -252,6 +322,113 @@ def test_input_reference_preserves_publication_and_availability_instants():
     )
     assert reference.publication_date == date(2026, 2, 1)
     assert reference.available_at == NOW
+
+
+def test_metric_provenance_only_contains_actual_dependencies():
+    refs = (
+        ValuationInputReference(
+            "DAILY_PRICE", 90, 2, 1, NOW, observation_date=date(2026, 5, 15)
+        ),
+        *(
+            ValuationInputReference(
+                "FINANCIAL_LINE",
+                index,
+                3,
+                1,
+                NOW,
+                parent_record_id=100 + index,
+                financial_item_code=code,
+                financial_period="FY",
+                period_end=date(2025, 12, 31),
+            )
+            for index, code in enumerate(
+                (
+                    "EPS",
+                    "NET_INCOME",
+                    "WEIGHTED_AVERAGE_SHARES",
+                    "TOTAL_EQUITY",
+                    "SHARES_OUTSTANDING",
+                    "CASH_AND_CASH_EQUIVALENTS",
+                    "SHORT_TERM_DEBT",
+                    "LONG_TERM_DEBT",
+                    "OPERATING_PROFIT",
+                    "DEPRECIATION_AMORTIZATION",
+                    "UNRELATED_LINE",
+                ),
+                1,
+            )
+        ),
+    )
+    inputs = ValuationInputs(
+        security_id=1,
+        observation_date=date(2026, 5, 15),
+        as_of=NOW,
+        currency="USD",
+        closing_price=Decimal("100"),
+        reported_eps=Decimal("5"),
+        net_income=Decimal("100"),
+        weighted_average_shares=Decimal("20"),
+        total_equity=Decimal("500"),
+        shares_outstanding=Decimal("20"),
+        cash_and_equivalents=Decimal("10"),
+        short_term_debt=Decimal("5"),
+        long_term_debt=Decimal("15"),
+        operating_profit=Decimal("80"),
+        depreciation_amortization=Decimal("10"),
+        price_observation_id=90,
+        price_source_id=2,
+        price_revision_number=1,
+        price_available_at=NOW,
+        input_references=refs,
+    )
+    expected = {
+        ValuationMetricCode.PER: {"EPS"},
+        ValuationMetricCode.PBR: {"TOTAL_EQUITY", "SHARES_OUTSTANDING"},
+        ValuationMetricCode.MARKET_CAPITALIZATION: {"SHARES_OUTSTANDING"},
+        ValuationMetricCode.ENTERPRISE_VALUE: {
+            "SHARES_OUTSTANDING",
+            "SHORT_TERM_DEBT",
+            "LONG_TERM_DEBT",
+            "CASH_AND_CASH_EQUIVALENTS",
+        },
+        ValuationMetricCode.EBITDA: {"OPERATING_PROFIT", "DEPRECIATION_AMORTIZATION"},
+        ValuationMetricCode.EV_EBITDA: {
+            "SHARES_OUTSTANDING",
+            "SHORT_TERM_DEBT",
+            "LONG_TERM_DEBT",
+            "CASH_AND_CASH_EQUIVALENTS",
+            "OPERATING_PROFIT",
+            "DEPRECIATION_AMORTIZATION",
+        },
+    }
+    for code, financial_codes in expected.items():
+        result = calculate_metric(_definition(code), inputs)
+        recorded = {
+            ref.financial_item_code
+            for ref in result.input_references
+            if ref.financial_item_code is not None
+        }
+        assert recorded == financial_codes
+        assert "UNRELATED_LINE" not in recorded
+        assert any(
+            ref.record_type == "DAILY_PRICE" for ref in result.input_references
+        ) == (code != ValuationMetricCode.EBITDA)
+    derived = calculate_metric(
+        _definition(ValuationMetricCode.EPS),
+        replace(inputs, reported_eps=None),
+    )
+    assert {ref.financial_item_code for ref in derived.input_references} == {
+        "NET_INCOME",
+        "WEIGHTED_AVERAGE_SHARES",
+    }
+    derived_per = calculate_metric(
+        _definition(ValuationMetricCode.PER), replace(inputs, reported_eps=None)
+    )
+    assert {
+        ref.financial_item_code
+        for ref in derived_per.input_references
+        if ref.financial_item_code is not None
+    } == {"NET_INCOME", "WEIGHTED_AVERAGE_SHARES"}
 
 
 def test_valuation_inputs_reject_observation_after_cutoff():

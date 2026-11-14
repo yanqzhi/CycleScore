@@ -201,7 +201,9 @@ class BuildValuationInputs:
                 for result, line, _item in rows
             )
             amount = select_trailing_twelve_months(
-                period_inputs, request.valuation_date
+                period_inputs,
+                request.valuation_date,
+                aggregate_quarters=code != "EPS",
             )
             selected_rows = tuple(
                 result
@@ -210,24 +212,25 @@ class BuildValuationInputs:
             )
             selected[code] = amount, selected_rows
 
-        flow_periods = [
-            (amount.period_start, amount.period_end)
-            for amount, _rows in selected.values()
-            if amount.value is not None
-        ]
-        coherent_period = max(
-            flow_periods,
-            key=lambda pair: pair[1] or request.valuation_date,
-            default=None,
-        )
         flow_values: dict[str, Decimal] = {}
         flow_labels: list[str] = []
         for code, (amount, _selected_rows) in selected.items():
-            if (
-                amount.value is None
-                or (amount.period_start, amount.period_end) != coherent_period
-            ):
+            if amount.value is None:
                 continue
+            # Operating profit and D&A must describe the same period. Other
+            # metrics (especially directly reported EPS) select independently.
+            if code in {"OPERATING_PROFIT", "DEPRECIATION_AMORTIZATION"}:
+                counterpart = (
+                    "DEPRECIATION_AMORTIZATION"
+                    if code == "OPERATING_PROFIT"
+                    else "OPERATING_PROFIT"
+                )
+                other = selected.get(counterpart)
+                if other is None or (
+                    amount.period_start,
+                    amount.period_end,
+                ) != (other[0].period_start, other[0].period_end):
+                    continue
             flow_values[code] = amount.value
             flow_labels.append(amount.period_label or "")
             selected_ids = set(amount.statement_ids)

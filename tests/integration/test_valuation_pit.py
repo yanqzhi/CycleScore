@@ -243,3 +243,152 @@ def test_historical_valuation_uses_only_revisions_visible_at_cutoff(session):
     calculator.execute(inputs_v1, (ValuationMetricCode.PER,))
     nested.rollback()
     assert len(result_repository.list_by_security(security.id)) == 2
+
+
+def test_quarterly_eps_is_derived_from_ttm_income_and_aligned_weighted_shares(session):
+    company = CompanyModel(name="Changing Shares Co", country_code="US")
+    session.add(company)
+    session.flush()
+    security = SecurityModel(company_id=company.id, security_type="COMMON")
+    source = DataSourceModel(code="EPS-PIT", name="EPS PIT", provider_type="test")
+    session.add_all([security, source])
+    session.flush()
+    items = SQLAlchemyFinancialItemRepository(session)
+    definitions = {
+        "NET_INCOME": items.create(
+            FinancialItem(
+                "NET_INCOME",
+                "Net income",
+                StatementType.PL,
+                "income",
+                UnitDimension.CURRENCY_AMOUNT,
+            )
+        ),
+        "EPS": items.create(
+            FinancialItem(
+                "EPS", "EPS", StatementType.PL, "income", UnitDimension.PER_SHARE
+            )
+        ),
+        "WEIGHTED_AVERAGE_SHARES": items.create(
+            FinancialItem(
+                "WEIGHTED_AVERAGE_SHARES",
+                "Weighted shares",
+                StatementType.PL,
+                "income",
+                UnitDimension.SHARES,
+            )
+        ),
+    }
+    quarters = (
+        (2025, "Q2", date(2025, 4, 1), date(2025, 6, 30), "10"),
+        (2025, "Q3", date(2025, 7, 1), date(2025, 9, 30), "1"),
+        (2025, "Q4", date(2025, 10, 1), date(2025, 12, 31), "1"),
+        (2026, "Q1", date(2026, 1, 1), date(2026, 3, 31), "1"),
+    )
+    shares = ("10", "100", "100", "100")
+    for (year, period, start, end, quarterly_eps), share_count in zip(
+        quarters, shares, strict=True
+    ):
+        statement = FinancialStatementModel(
+            company_id=company.id,
+            source_id=source.id,
+            statement_type="PL",
+            accounting_standard="IFRS",
+            consolidation_scope="CONSOLIDATED",
+            fiscal_year=year,
+            fiscal_period=period,
+            period_start=start,
+            period_end=end,
+            publication_date=end + timedelta(days=30),
+            publication_datetime=None,
+            available_at=AS_OF - timedelta(days=1),
+            collected_at=AS_OF - timedelta(days=1),
+            revision_number=1,
+            reporting_currency="USD",
+        )
+        session.add(statement)
+        session.flush()
+        for code, value, unit in (
+            ("NET_INCOME", "100", "CURRENCY"),
+            ("EPS", quarterly_eps, "PER_SHARE"),
+            ("WEIGHTED_AVERAGE_SHARES", share_count, "SHARES"),
+        ):
+            session.add(
+                FinancialStatementItemModel(
+                    financial_statement_id=statement.id,
+                    financial_item_id=definitions[code].id,
+                    value=Decimal(value),
+                    currency_code="USD" if code != "WEIGHTED_AVERAGE_SHARES" else None,
+                    unit_code=unit,
+                    scale_multiplier=1,
+                )
+            )
+    price = DailyPriceModel(
+        security_id=security.id,
+        observation_date=VALUATION_DATE,
+        open=Decimal("100"),
+        high=Decimal("100"),
+        low=Decimal("100"),
+        close=Decimal("100"),
+        adjusted_close=None,
+        volume=100,
+        currency="USD",
+        source_id=source.id,
+        publication_date=None,
+        available_at=AS_OF - timedelta(hours=1),
+        collected_at=AS_OF - timedelta(hours=1),
+        revision_number=1,
+    )
+    session.add(price)
+    session.flush()
+    statements = SQLAlchemyFinancialStatementRepository(session)
+    lines = SQLAlchemyFinancialStatementItemRepository(session)
+    market = MarketDataAccess(
+        SQLAlchemyDailyPriceRepository(session), SQLAlchemyFxRateRepository(session)
+    )
+    built = BuildValuationInputs(
+        SecuritySqlAlchemyRepository(session),
+        items,
+        GetFinancialStatements(statements, lines),
+        market,
+    ).execute(
+        ValuationInputRequest(
+            security_id=security.id,
+            valuation_date=VALUATION_DATE,
+            as_of=AS_OF,
+            financial_source_id=source.id,
+            market_source_id=source.id,
+        )
+    )
+    assert built.reported_eps is None
+    assert built.net_income == Decimal("400")
+    assert built.weighted_average_shares is not None
+    derived_eps = Decimal("400") / built.weighted_average_shares
+    defs = SQLAlchemyValuationMetricRepository(session)
+    for definition in default_metric_definitions():
+        if definition.metric_code in {ValuationMetricCode.EPS, ValuationMetricCode.PER}:
+            defs.create(definition)
+    results = CalculateValuationMetrics(
+        defs, SQLAlchemyValuationMetricValueRepository(session)
+    ).execute(built, (ValuationMetricCode.EPS, ValuationMetricCode.PER))
+    by_code = {result.metric_code: result for result in results}
+    assert by_code[ValuationMetricCode.EPS].value == derived_eps.quantize(
+        Decimal("0.000000000001")
+    )
+    assert (
+        by_code[ValuationMetricCode.EPS].eps_calculation_method
+        == "DERIVED_NET_INCOME_OVER_WEIGHTED_SHARES"
+    )
+    assert by_code[ValuationMetricCode.PER].value == (
+        Decimal("100") / derived_eps
+    ).quantize(Decimal("0.000000000001"))
+    assert {
+        reference.financial_item_code
+        for reference in by_code[ValuationMetricCode.PER].input_references
+        if reference.financial_item_code is not None
+    } == {"NET_INCOME", "WEIGHTED_AVERAGE_SHARES"}
+    assert {
+        reference.financial_item_code
+        for reference in by_code[ValuationMetricCode.EPS].input_references
+        if reference.financial_item_code is not None
+    } == {"NET_INCOME", "WEIGHTED_AVERAGE_SHARES"}

@@ -25,6 +25,10 @@ Market-data use cases receive provider and repository implementations through co
 
 Application use cases accept common financial statement input DTOs and typed Domain entities. The Infrastructure repositories map these entities to SQLAlchemy rows. No source-specific document format or live provider is part of Sprint 04. Historical revisions are immutable; the caller owns the transaction, including rollback on any line persistence failure. See [FINANCIAL_DATA_SPEC.md](FINANCIAL_DATA_SPEC.md).
 
+### Valuation calculations
+
+Valuation calculations use shared point-in-time price and statement access, then calculate with Domain `ValuationInputs`. Quarterly EPS is not summed; the assembler prefers a reported FY/TTM EPS or supplies aligned TTM net income and weighted-average shares for derivation. Each metric snapshot retains only the input-line and price references used by its formula. Snapshot history remains append-only and transaction ownership stays with the caller. See [VALUATION_SPEC.md](VALUATION_SPEC.md).
+
 ### Generic ingestion pipeline
 
 `ExecuteDataIngestionPipeline` coordinates acquisition, raw retention, transformation, validation, and idempotent normalized persistence. Its request contains source and dataset identity plus scalar parameters; it does not carry a file path. For `prices.daily` and `fx.daily`, Infrastructure's `CsvMarketDataAdapter` reads configured files and persists their original bytes, and `CsvMarketDataTransformer` uses the existing CSV parser to produce shared market-data row DTOs. Application contexts carry the security/pair, source, and provenance needed for Domain construction. Dataset validators call the shared `daily_price_from_record` and `fx_rate_from_record` functions also used by the legacy import use cases. Normalized adapters use the existing market repositories and natural revision keys inside a SAVEPOINT. Run and raw repositories stay caller-transaction-bound, and the pipeline never commits. Future API or IBKR adapters can return the same raw batch format and common DTOs without CSV or filesystem dependencies. See [DATA_PIPELINE_SPEC.md](DATA_PIPELINE_SPEC.md).

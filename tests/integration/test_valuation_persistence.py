@@ -56,7 +56,9 @@ def test_metric_definitions_seeded_calculation_and_historical_retrieval(session)
     )
     assert calculated[0].value == Decimal("15")
     assert calculated[0].price_source_id == source.id
-    assert calculated[0].financial_statement_ids == (11,)
+    # Caller-level IDs without an EPS line reference are not persisted as
+    # provenance for a reported EPS calculation.
+    assert calculated[0].financial_statement_ids == ()
     assert calculated[0].input_snapshot == (
         ("closing_price", Decimal("1500")),
         ("reported_eps", Decimal("100")),

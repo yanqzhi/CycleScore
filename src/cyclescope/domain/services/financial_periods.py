@@ -30,7 +30,10 @@ class TrailingAmount:
 
 
 def select_trailing_twelve_months(
-    observations: tuple[IncomePeriodAmount, ...], valuation_date: date
+    observations: tuple[IncomePeriodAmount, ...],
+    valuation_date: date,
+    *,
+    aggregate_quarters: bool = True,
 ) -> TrailingAmount:
     """Select one FY/TTM amount or sum exactly four contiguous discrete quarters.
 
@@ -65,7 +68,7 @@ def select_trailing_twelve_months(
         )
         for row in direct
     ]
-    quarters = _latest_contiguous_quarters(quarter_rows)
+    quarters = _latest_contiguous_quarters(quarter_rows) if aggregate_quarters else ()
     if quarters:
         candidates.append(
             TrailingAmount(

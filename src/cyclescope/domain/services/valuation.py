@@ -145,15 +145,39 @@ def calculate_metric(
                 "Metric value exceeds NUMERIC(38, 12) precision."
             ) from exc
     status = ValuationResultStatus.AVAILABLE
-    if missing:
+    if any(value.startswith("INVALID_INPUT:") for value in invalid):
+        status = ValuationResultStatus.INVALID_INPUT
+    elif any(value.startswith("NOT_APPLICABLE:") for value in invalid):
+        status = ValuationResultStatus.NOT_APPLICABLE
+    elif missing:
         status = ValuationResultStatus.INSUFFICIENT_DATA
-    elif invalid:
-        status = (
-            ValuationResultStatus.NOT_APPLICABLE
-            if any(value.startswith("NOT_APPLICABLE:") for value in invalid)
-            else ValuationResultStatus.INVALID_INPUT
+    issues = [value.split(":", 1)[-1].strip() for value in (*missing, *invalid)]
+    fields, financial_codes, uses_price = _metric_dependencies(
+        definition.metric_code, inputs
+    )
+    references = tuple(
+        reference
+        for reference in inputs.input_references
+        if (
+            reference.record_type == "DAILY_PRICE"
+            and uses_price
+            or reference.record_type == "FINANCIAL_LINE"
+            and reference.financial_item_code in financial_codes
         )
-    issues = [value.split(":", 1)[-1].strip() for value in (missing or invalid)]
+    )
+    financial_references = tuple(
+        reference
+        for reference in references
+        if reference.record_type == "FINANCIAL_LINE"
+    )
+    price_reference = next(
+        (
+            reference
+            for reference in references
+            if reference.record_type == "DAILY_PRICE"
+        ),
+        None,
+    )
     return ValuationMetricValue(
         security_id=inputs.security_id,
         metric_code=definition.metric_code,
@@ -170,46 +194,155 @@ def calculate_metric(
         unit=definition.unit,
         financial_period=inputs.financial_period,
         eps_calculation_method=(
-            inputs.eps_calculation_method
-            or (
-                "REPORTED"
-                if inputs.reported_eps is not None
-                else "DERIVED_NET_INCOME_OVER_WEIGHTED_SHARES"
-                if inputs.net_income is not None
-                and inputs.weighted_average_shares is not None
-                else None
+            (
+                inputs.eps_calculation_method
+                or (
+                    "REPORTED"
+                    if inputs.reported_eps is not None
+                    else "DERIVED_NET_INCOME_OVER_WEIGHTED_SHARES"
+                    if inputs.net_income is not None
+                    and inputs.weighted_average_shares is not None
+                    else None
+                )
             )
+            if definition.metric_code
+            in {ValuationMetricCode.EPS, ValuationMetricCode.PER}
+            else None
         ),
         calculation_version=definition.calculation_version,
-        price_observation_id=inputs.price_observation_id,
-        price_source_id=inputs.price_source_id,
-        price_revision_number=inputs.price_revision_number,
-        price_available_at=inputs.price_available_at,
-        financial_statement_ids=inputs.financial_statement_ids,
-        financial_source_ids=inputs.financial_source_ids,
-        financial_statement_available_ats=inputs.financial_statement_available_ats,
+        price_observation_id=(
+            price_reference.record_id
+            if price_reference
+            else inputs.price_observation_id
+            if uses_price
+            else None
+        ),
+        price_source_id=(
+            price_reference.source_id
+            if price_reference
+            else inputs.price_source_id
+            if uses_price
+            else None
+        ),
+        price_revision_number=(
+            price_reference.revision_number
+            if price_reference
+            else inputs.price_revision_number
+            if uses_price
+            else None
+        ),
+        price_available_at=(
+            price_reference.available_at
+            if price_reference
+            else inputs.price_available_at
+            if uses_price
+            else None
+        ),
+        financial_statement_ids=tuple(
+            sorted(
+                {
+                    reference.parent_record_id
+                    for reference in financial_references
+                    if reference.parent_record_id is not None
+                }
+            )
+        ),
+        financial_source_ids=tuple(
+            sorted({reference.source_id for reference in financial_references})
+        ),
+        financial_statement_available_ats=tuple(
+            sorted({reference.available_at for reference in financial_references})
+        ),
         input_snapshot=tuple(
             (name, value)
-            for name in (
-                "closing_price",
-                "adjusted_closing_price",
-                "reported_eps",
-                "net_income",
-                "total_equity",
-                "cash_and_equivalents",
-                "short_term_debt",
-                "long_term_debt",
-                "operating_profit",
-                "depreciation_amortization",
-                "shares_outstanding",
-                "weighted_average_shares",
-            )
+            for name in fields
             if (value := getattr(inputs, name)) is not None
         ),
         unavailable_inputs=tuple(issues),
         unavailable_reason="; ".join(issues) if issues else None,
-        input_references=inputs.input_references,
+        input_references=references,
     )
+
+
+def _metric_dependencies(
+    code: ValuationMetricCode, inputs: ValuationInputs
+) -> tuple[tuple[str, ...], frozenset[str], bool]:
+    """Return normalized input fields and source-line codes used by a metric."""
+    eps_fields = (
+        ("reported_eps",)
+        if inputs.reported_eps is not None
+        else ("net_income", "weighted_average_shares")
+    )
+    eps_codes = (
+        frozenset({"EPS"})
+        if inputs.reported_eps is not None
+        else frozenset({"NET_INCOME", "WEIGHTED_AVERAGE_SHARES"})
+    )
+    dependencies = {
+        ValuationMetricCode.EPS: (eps_fields, eps_codes, False),
+        ValuationMetricCode.PER: (("closing_price", *eps_fields), eps_codes, True),
+        ValuationMetricCode.PBR: (
+            ("closing_price", "total_equity", "shares_outstanding"),
+            frozenset({"TOTAL_EQUITY", "SHARES_OUTSTANDING"}),
+            True,
+        ),
+        ValuationMetricCode.BVPS: (
+            ("total_equity", "shares_outstanding"),
+            frozenset({"TOTAL_EQUITY", "SHARES_OUTSTANDING"}),
+            False,
+        ),
+        ValuationMetricCode.MARKET_CAPITALIZATION: (
+            ("closing_price", "shares_outstanding"),
+            frozenset({"SHARES_OUTSTANDING"}),
+            True,
+        ),
+        ValuationMetricCode.ENTERPRISE_VALUE: (
+            (
+                "closing_price",
+                "shares_outstanding",
+                "short_term_debt",
+                "long_term_debt",
+                "cash_and_equivalents",
+            ),
+            frozenset(
+                {
+                    "SHARES_OUTSTANDING",
+                    "SHORT_TERM_DEBT",
+                    "LONG_TERM_DEBT",
+                    "CASH_AND_CASH_EQUIVALENTS",
+                }
+            ),
+            True,
+        ),
+        ValuationMetricCode.EBITDA: (
+            ("operating_profit", "depreciation_amortization"),
+            frozenset({"OPERATING_PROFIT", "DEPRECIATION_AMORTIZATION"}),
+            False,
+        ),
+        ValuationMetricCode.EV_EBITDA: (
+            (
+                "closing_price",
+                "shares_outstanding",
+                "short_term_debt",
+                "long_term_debt",
+                "cash_and_equivalents",
+                "operating_profit",
+                "depreciation_amortization",
+            ),
+            frozenset(
+                {
+                    "SHARES_OUTSTANDING",
+                    "SHORT_TERM_DEBT",
+                    "LONG_TERM_DEBT",
+                    "CASH_AND_CASH_EQUIVALENTS",
+                    "OPERATING_PROFIT",
+                    "DEPRECIATION_AMORTIZATION",
+                }
+            ),
+            True,
+        ),
+    }
+    return dependencies[code]
 
 
 def _resolve(*values: tuple[str, Decimal | None]) -> tuple[list[Decimal], list[str]]:
@@ -226,13 +359,20 @@ def _calc(
     values: tuple[tuple[str, Decimal | None], ...],
     operation: Callable[..., Decimal],
     *,
-    positive: str | None = None,
+    positive_input: str | None = None,
 ) -> tuple[Decimal | None, list[str], list[str]]:
     present, missing = _resolve(*values)
     if missing:
         return None, missing, []
-    if positive is not None and present[-1] <= 0:
-        return None, [], [f"INVALID_INPUT: {positive} must be positive."]
+    if positive_input is not None:
+        values_by_name = dict(values)
+        divisor = values_by_name.get(positive_input)
+        if divisor is None:
+            raise DomainValidationError(
+                f"Positive input {positive_input!r} is not in this calculation."
+            )
+        if divisor <= 0:
+            return None, [], [f"INVALID_INPUT: {positive_input} must be positive."]
     return operation(*present), [], []
 
 
@@ -245,7 +385,7 @@ def _eps(i: ValuationInputs) -> tuple[Decimal | None, list[str], list[str]]:
             ("weighted_average_shares", i.weighted_average_shares),
         ),
         lambda earnings, shares: earnings / shares,
-        positive="weighted_average_shares",
+        positive_input="weighted_average_shares",
     )
 
 
@@ -256,7 +396,7 @@ def _bvps(i: ValuationInputs) -> tuple[Decimal | None, list[str], list[str]]:
             ("shares_outstanding", i.shares_outstanding),
         ),
         lambda equity, shares: equity / shares,
-        positive="shares_outstanding",
+        positive_input="shares_outstanding",
     )
 
 
@@ -267,7 +407,7 @@ def _market_cap(i: ValuationInputs) -> tuple[Decimal | None, list[str], list[str
             ("shares_outstanding", i.shares_outstanding),
         ),
         lambda price, shares: price * shares,
-        positive="shares_outstanding",
+        positive_input="shares_outstanding",
     )
 
 
@@ -285,7 +425,7 @@ def _enterprise_value(
         lambda price, shares, short_debt, long_debt, cash: (
             price * shares + short_debt + long_debt - cash
         ),
-        positive="shares_outstanding",
+        positive_input="shares_outstanding",
     )
 
 
