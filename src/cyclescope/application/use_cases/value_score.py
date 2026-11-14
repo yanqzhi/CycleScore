@@ -288,11 +288,17 @@ class CalculateValueScore:
                 "Explicit peer IDs are required.",
             )
         compatible: list[int] = []
-        excluded_peer_reasons: dict[int, str] = {}
+        excluded_peer_reasons: dict[int, list[str]] = {}
+
+        def record_exclusion(peer_id: int, reason: str) -> None:
+            reasons = excluded_peer_reasons.setdefault(peer_id, [])
+            if reason not in reasons:
+                reasons.append(reason)
+
         for peer_id in request.peer_security_ids:
             peer = self._securities.get_by_id(peer_id)
             if peer is None:
-                excluded_peer_reasons[peer_id] = "Unknown security."
+                record_exclusion(peer_id, "Unknown security.")
                 continue
             peer_exposures = _active_exposures(
                 self._exposures.list_by_company(peer.company_id), cutoff
@@ -300,8 +306,9 @@ class CalculateValueScore:
             if set(target) & set(peer_exposures):
                 compatible.append(peer_id)
             else:
-                excluded_peer_reasons[peer_id] = (
-                    "No active sub-industry exposure is shared with the target."
+                record_exclusion(
+                    peer_id,
+                    "No active sub-industry exposure is shared with the target.",
                 )
         metric_map = (
             (ValuationMetricCode.PER, "PER"),
@@ -437,10 +444,11 @@ class CalculateValueScore:
                             )
                     for peer_id in compatible:
                         if peer_id not in peers_by_id:
-                            excluded_peer_reasons[peer_id] = (
+                            record_exclusion(
+                                peer_id,
                                 f"Excluded from selected {code} cohort: no eligible "
                                 "matching source, currency, period, or calculation "
-                                "version."
+                                "version.",
                             )
             else:
                 unavailable_reasons.append(
@@ -453,7 +461,7 @@ class CalculateValueScore:
                 # Record candidate source-specific counts for every peer. No
                 # source set is merged when no cohort reaches the minimum.
                 for peer_id in compatible:
-                    excluded_peer_reasons.setdefault(
+                    record_exclusion(
                         peer_id,
                         f"Excluded from {code}: no eligible comparable source cohort "
                         f"reached {request.config.minimum_peer_count} peers.",
@@ -464,7 +472,10 @@ class CalculateValueScore:
             references=tuple(references),
             expected_submetrics=len(metric_map),
             unavailable_reasons=tuple(unavailable_reasons),
-            excluded_peer_reasons=tuple(sorted(excluded_peer_reasons.items())),
+            excluded_peer_reasons=tuple(
+                (peer_id, " ".join(reasons))
+                for peer_id, reasons in sorted(excluded_peer_reasons.items())
+            ),
         )
 
 

@@ -402,7 +402,8 @@ def test_relative_valuation_uses_only_pit_source_and_period_comparable_peers(
     for metric_index, metric in enumerate(codes):
         save_value(securities[0].id, metric, 10 + metric_index)
         for peer_index, peer_value in enumerate(peer_values, start=1):
-            save_value(securities[peer_index].id, metric, peer_value + metric_index)
+            if not (peer_index == 4 and metric == ValuationMetricCode.PER):
+                save_value(securities[peer_index].id, metric, peer_value + metric_index)
         # These eligible snapshots violate one comparability dimension each.
         save_value(
             securities[5].id,
@@ -457,6 +458,15 @@ def test_relative_valuation_uses_only_pit_source_and_period_comparable_peers(
                 financial_source=2,
                 price_source=market_source_other.id,
             )
+    # PER has four eligible peers in source cohort 2, while PBR and EV/EBITDA
+    # have only three. This verifies the documented per-metric policy.
+    save_value(
+        securities[4].id,
+        ValuationMetricCode.PER,
+        500,
+        financial_source=2,
+        price_source=market_source_other.id,
+    )
 
     exposures = CompanyIndustryExposureSqlAlchemyRepository(session)
     target = securities[0]
@@ -477,8 +487,6 @@ def test_relative_valuation_uses_only_pit_source_and_period_comparable_peers(
                 security_id=target.id,
                 as_of=AS_OF,
                 calendar_id="TSE",
-                market_source_id=market_source.id,
-                financial_source_id=1,
                 peer_security_ids=peer_ids,
             )
         ).score
@@ -495,41 +503,91 @@ def test_relative_valuation_uses_only_pit_source_and_period_comparable_peers(
     assert next(m for m in relative.measures if m.code == "PER").value == Decimal("0.5")
     assert all(ref.available_at <= AS_OF for ref in relative.input_references)
 
-    with_incompatible_extra = run_score((*peers, securities[10].id)).components[5]
+    # Three source-1 peers remain eligible when an additional same-industry
+    # source-2 peer is supplied without selecting either source explicitly.
+    with_incompatible_extra = run_score((*peers, securities[5].id)).components[5]
     assert with_incompatible_extra.status.value == "AVAILABLE"
-    assert securities[10].id in {
+    assert with_incompatible_extra.peer_security_ids == peers
+    assert securities[5].id in {
         peer_id for peer_id, _ in with_incompatible_extra.excluded_peer_reasons
     }
+    incompatible_reason = dict(with_incompatible_extra.excluded_peer_reasons)[
+        securities[5].id
+    ]
+    assert "source" in incompatible_reason.lower()
+    assert all(code in incompatible_reason for code in ("PER", "PBR", "EV_EBITDA"))
+    assert next(
+        measure for measure in with_incompatible_extra.measures if measure.code == "PER"
+    ).value == Decimal("0.5")
 
-    deterministic = calculator.execute(
-        CalculateValueScoreRequest(
-            security_id=target.id,
-            as_of=AS_OF,
-            calendar_id="TSE",
-            peer_security_ids=peers,
-        )
-    ).score.components[5]
+    insufficient = run_score((securities[1].id, securities[2].id, securities[5].id))
+    assert insufficient.components[5].status.value == "UNAVAILABLE"
+    assert not insufficient.components[5].peer_security_ids
+    assert all(
+        "source cohort" in reason
+        for _, reason in insufficient.components[5].excluded_peer_reasons
+    )
+
+    deterministic_score = run_score(peers)
+    deterministic = deterministic_score.components[5]
+    repeated = run_score(peers).components[5]
     assert next(m for m in deterministic.measures if m.code == "PER").value == Decimal(
         "0.5"
     )
+    assert repeated.score == deterministic.score
+    assert repeated.peer_security_ids == deterministic.peer_security_ids
+    assert repeated.input_references == deterministic.input_references
     assert {
         reference.financial_source_ids for reference in deterministic.input_references
     } == {(1,)}
     assert {reference.source_id for reference in deterministic.input_references} == {
         market_source.id
     }
+    for code in ("PER", "PBR", "EV_EBITDA"):
+        metric_references = [
+            reference
+            for reference in deterministic.input_references
+            if reference.reference_code == code
+        ]
+        assert {reference.security_id for reference in metric_references} == {
+            target.id,
+            *peers,
+        }
+        assert {reference.financial_source_ids for reference in metric_references} == {
+            (1,)
+        }
+        assert {reference.source_id for reference in metric_references} == {
+            market_source.id
+        }
+
+    # Cohorts are selected independently for each metric and remain explicit in
+    # the metric-coded references: source 2 wins PER, source 1 wins PBR and EV.
+    per_metric = run_score((*peers, securities[4].id)).components[5]
+    by_metric = {
+        code: [ref for ref in per_metric.input_references if ref.reference_code == code]
+        for code in ("PER", "PBR", "EV_EBITDA")
+    }
+    assert {ref.financial_source_ids for ref in by_metric["PER"]} == {(2,)}
+    assert {ref.source_id for ref in by_metric["PER"]} == {market_source_other.id}
+    assert {
+        ref.security_id for ref in by_metric["PER"] if ref.security_id != target.id
+    } == {*peers, securities[4].id}
+    for code in ("PBR", "EV_EBITDA"):
+        assert {ref.financial_source_ids for ref in by_metric[code]} == {(1,)}
+        assert {ref.source_id for ref in by_metric[code]} == {market_source.id}
+        assert {
+            ref.security_id for ref in by_metric[code] if ref.security_id != target.id
+        } == {*peers, securities[4].id}
 
     bad_peer_indexes = (5, 6, 7, 8, 9, 10)
     for index in bad_peer_indexes:
         result = run_score((securities[1].id, securities[2].id, securities[index].id))
         assert result.components[5].status.value == "UNAVAILABLE"
-    insufficient = run_score((securities[1].id, securities[2].id))
-    assert insufficient.components[5].status.value == "UNAVAILABLE"
-
     # Real SQLite score repository persists the source-filtered peer audit.
     persisted = SQLAlchemyValueScoreRepository(session).list_by_security(target.id)
-    assert len(persisted) == 3 + len(bad_peer_indexes) + 1
+    assert len(persisted) == 6 + len(bad_peer_indexes)
     assert persisted[0].components[5].peer_security_ids == relative.peer_security_ids
-    assert securities[10].id in {
+    assert securities[5].id in {
         peer_id for peer_id, _ in persisted[1].components[5].excluded_peer_reasons
     }
+    assert persisted[1].components[5] == with_incompatible_extra

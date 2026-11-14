@@ -88,11 +88,23 @@ to recalculate a new aggregate until the caller supplies new inputs.
 
 Peer observations are grouped by exact singleton financial-source and
 market-source signature. Cohorts must also match currency, financial period,
-and calculation version. The selected cohort is the one with the most eligible
-peers; ties are broken by ascending financial source ID, market source ID,
-currency, period, calculation version, cutoff, and snapshot ID. Peers outside
-the selected cohort are excluded and retain a peer ID and reason in the score
-audit. A peer excluded from one metric does not invalidate other eligible peers.
+and calculation version. Selection is performed independently for PER, PBR,
+and EV/EBITDA: the cohort with the most eligible peers for that metric wins,
+provided it meets the configured minimum. Ties are broken by ascending
+financial source ID, market source ID, currency, period, calculation version,
+cutoff, and snapshot ID. This per-metric policy allows a metric with a larger
+valid source cohort to contribute even when another metric has less coverage;
+it never combines source signatures inside one peer median.
+
+Each selected target and peer valuation snapshot is retained as a
+metric-coded input reference. The metric code, security ID, financial source
+IDs, and market source ID therefore identify the exact cohort membership and
+source signature used by each median, including after persistence round-trip.
+The component-level selected-peer list is the union of peers used by its
+available metrics. Excluded peers retain their IDs and metric-prefixed reasons,
+including when a peer is excluded from more than one metric. Observations with
+`available_at > as_of` are excluded before cohort grouping. A peer excluded
+from one metric does not invalidate another metric's eligible cohort.
 
 ## Persistence and limitations
 
