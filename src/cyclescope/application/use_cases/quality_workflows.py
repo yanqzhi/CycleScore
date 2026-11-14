@@ -1,6 +1,6 @@
 """Application orchestration for quality reports and anomaly lifecycle."""
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 
 from cyclescope.application.dto.data_quality import (
     FxQualityRequest,
@@ -44,13 +44,20 @@ class AssessDailyPriceQuality:
         self._assessor = MarketDataQualityAssessor(config)
 
     def execute(self, request: PriceQualityRequest) -> QualityAssessmentResult:
-        # Include all prior eligible history so the assessor can use the prior
-        # close and rolling-volume observations without expanding report scope.
-        period = MarketDataPeriod(date.min, request.end_date)
+        period = MarketDataPeriod(request.start_date, request.end_date)
         records = self._market.get_by_security_and_period(
             request.security_id, period, request.as_of, request.source_id
         )
-        assessment = self._assessor.assess_prices(request, records, self._calendar)
+        lookback = self._market.get_preceding_by_security(
+            request.security_id,
+            request.start_date,
+            request.as_of,
+            request.source_id,
+            limit_per_source=20,
+        )
+        assessment = self._assessor.assess_prices(
+            request, records, self._calendar, lookback_records=lookback
+        )
         report, anomalies = self._quality.persist_assessment(
             assessment.report, assessment.anomalies
         )
@@ -72,11 +79,20 @@ class AssessFxRateQuality:
 
     def execute(self, request: FxQualityRequest) -> QualityAssessmentResult:
         pair = CurrencyPair(request.base_currency, request.quote_currency)
-        period = MarketDataPeriod(date.min, request.end_date)
+        period = MarketDataPeriod(request.start_date, request.end_date)
         records = self._market.get_by_pair_and_period(
             pair, period, request.as_of, request.source_id
         )
-        assessment = self._assessor.assess_fx(request, records, self._calendar)
+        lookback = self._market.get_preceding_by_pair(
+            pair,
+            request.start_date,
+            request.as_of,
+            request.source_id,
+            limit_per_source=20,
+        )
+        assessment = self._assessor.assess_fx(
+            request, records, self._calendar, lookback_records=lookback
+        )
         report, anomalies = self._quality.persist_assessment(
             assessment.report, assessment.anomalies
         )

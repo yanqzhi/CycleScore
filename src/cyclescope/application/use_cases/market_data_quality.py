@@ -12,7 +12,10 @@ from cyclescope.application.dto.data_quality import (
     PriceQualityRequest,
     QualityAssessmentResult,
 )
-from cyclescope.application.interfaces.data_quality import TradingCalendar
+from cyclescope.application.interfaces.data_quality import (
+    TradingCalendar,
+    TradingCalendarNotConfigured,
+)
 from cyclescope.domain.entities import DailyPrice, FxRate
 from cyclescope.domain.entities.data_quality import DataAnomaly, DataQualityReport
 from cyclescope.domain.exceptions import DomainValidationError
@@ -41,14 +44,16 @@ class MarketDataQualityAssessor:
         records: Sequence[DailyPrice],
         calendar: TradingCalendar | None,
         *,
+        lookback_records: Sequence[DailyPrice] = (),
         detected_at: datetime | None = None,
     ) -> QualityAssessmentResult:
         if request.security_id < 1 or request.start_date > request.end_date:
             raise DomainValidationError("Invalid price quality request scope.")
         cutoff = _utc(request.as_of)
+        candidates = (*records, *lookback_records)
         rows = tuple(
             row
-            for row in records
+            for row in candidates
             if row.security_id == request.security_id
             and request.start_date <= row.observation_date <= request.end_date
             and row.available_at <= cutoff
@@ -56,7 +61,7 @@ class MarketDataQualityAssessor:
         )
         history = tuple(
             row
-            for row in records
+            for row in candidates
             if row.security_id == request.security_id
             and row.observation_date <= request.end_date
             and row.available_at <= cutoff
@@ -110,6 +115,7 @@ class MarketDataQualityAssessor:
         records: Sequence[FxRate],
         calendar: TradingCalendar | None = None,
         *,
+        lookback_records: Sequence[FxRate] = (),
         detected_at: datetime | None = None,
     ) -> QualityAssessmentResult:
         if request.start_date > request.end_date:
@@ -121,9 +127,10 @@ class MarketDataQualityAssessor:
         if not base or not quote or base == quote:
             raise DomainValidationError("Invalid FX quality currency pair.")
         cutoff = _utc(request.as_of)
+        candidates = (*records, *lookback_records)
         rows = tuple(
             row
-            for row in records
+            for row in candidates
             if row.base_currency == base
             and row.quote_currency == quote
             and request.start_date <= row.observation_date <= request.end_date
@@ -132,7 +139,7 @@ class MarketDataQualityAssessor:
         )
         history = tuple(
             row
-            for row in records
+            for row in candidates
             if row.base_currency == base
             and row.quote_currency == quote
             and row.observation_date <= request.end_date
@@ -183,14 +190,12 @@ class MarketDataQualityAssessor:
     ) -> tuple[date, ...] | None:
         if calendar is None or calendar_id is None:
             return None
+        try:
+            sessions = calendar.expected_sessions(calendar_id, start, end)
+        except TradingCalendarNotConfigured:
+            return None
         return tuple(
-            sorted(
-                {
-                    session
-                    for session in calendar.expected_sessions(calendar_id, start, end)
-                    if start <= session <= end
-                }
-            )
+            sorted({session for session in sessions if start <= session <= end})
         )
 
     def _price_duplicates(

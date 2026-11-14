@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 
 from cyclescope.application.interfaces.data_quality import DataQualityRepository
 from cyclescope.domain.entities.data_quality import (
@@ -205,23 +206,23 @@ class SQLAlchemyDataQualityRepository(DataQualityRepository):
         return _anomaly_entity(row) if row is not None else None
 
     def update_anomaly(self, anomaly: DataAnomaly) -> DataAnomaly:
+        """Deprecated safe no-op; status changes must use transition_anomaly."""
         if anomaly.id is None:
             raise DomainValidationError("Anomaly update requires an ID.")
         row = self._session.get(DataAnomalyModel, anomaly.id)
         if row is None:
             raise DomainValidationError("Anomaly does not exist.")
         current = _anomaly_entity(row)
-        static_current = replace(
-            current, status=anomaly.status, resolved_at=anomaly.resolved_at
-        )
-        if static_current != anomaly:
+        if (
+            current.status != anomaly.status
+            or current.resolved_at != anomaly.resolved_at
+        ):
+            raise DomainValidationError(
+                "Anomaly status changes must use transition_anomaly for auditing."
+            )
+        if current != anomaly:
             raise DomainValidationError("Anomaly detection history is immutable.")
-        if current.status in (AnomalyStatus.RESOLVED, AnomalyStatus.FALSE_POSITIVE):
-            raise DomainValidationError("Terminal anomalies cannot be modified.")
-        row.status = anomaly.status.value
-        row.resolved_at = anomaly.resolved_at
-        self._session.flush()
-        return _anomaly_entity(row)
+        return current
 
     def transition_anomaly(
         self, anomaly: DataAnomaly, event: DataAnomalyLifecycleEvent
@@ -259,7 +260,12 @@ class SQLAlchemyDataQualityRepository(DataQualityRepository):
                     actor=event.actor,
                 )
             )
-            self._session.flush()
+            try:
+                self._session.flush()
+            except StaleDataError as exc:
+                raise DomainValidationError(
+                    "Anomaly status changed concurrently; reload before retrying."
+                ) from exc
             return _anomaly_entity(row)
 
     def list_anomaly_events(self, anomaly_id: int) -> list[DataAnomalyLifecycleEvent]:

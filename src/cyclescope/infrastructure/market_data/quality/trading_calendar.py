@@ -3,6 +3,7 @@
 from collections.abc import Mapping, Sequence
 from datetime import date, timedelta
 
+from cyclescope.application.interfaces.data_quality import TradingCalendarNotConfigured
 from cyclescope.domain.exceptions import DomainValidationError
 
 
@@ -18,7 +19,9 @@ class WeekdayTradingCalendar:
         if start_date > end_date:
             raise DomainValidationError("Calendar start date must not follow end date.")
         if calendar_id not in self._holidays:
-            raise DomainValidationError(f"Unknown trading calendar: {calendar_id}")
+            raise TradingCalendarNotConfigured(
+                f"Unknown trading calendar: {calendar_id}"
+            )
         holidays = self._holidays[calendar_id]
         current = start_date
         sessions: list[date] = []

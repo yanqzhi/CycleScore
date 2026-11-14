@@ -2,10 +2,11 @@
 
 from datetime import UTC, date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from cyclescope.domain.entities import DailyPrice, FxRate
+from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.domain.repositories.contracts import (
     DailyPriceRepository,
     FxRateRepository,
@@ -146,6 +147,78 @@ class SQLAlchemyDailyPriceRepository(DailyPriceRepository):
                 key=lambda item: (item.observation_date, item.source_id),
             )
         ]
+
+    def get_preceding_by_security(
+        self,
+        security_id: int,
+        start_date: date,
+        as_of: datetime,
+        source_id: int | None = None,
+        *,
+        limit_per_source: int = 20,
+    ) -> list[DailyPrice]:
+        if limit_per_source < 1:
+            raise DomainValidationError("Lookback limit must be positive.")
+        cutoff = _as_utc(as_of)
+        conditions = [
+            DailyPriceModel.security_id == security_id,
+            DailyPriceModel.observation_date < start_date,
+            DailyPriceModel.observation_date <= cutoff.date(),
+            DailyPriceModel.available_at <= cutoff,
+        ]
+        if source_id is not None:
+            conditions.append(DailyPriceModel.source_id == source_id)
+        ranked_revisions = (
+            select(
+                DailyPriceModel.id.label("record_id"),
+                func.row_number()
+                .over(
+                    partition_by=(
+                        DailyPriceModel.source_id,
+                        DailyPriceModel.observation_date,
+                    ),
+                    order_by=(
+                        DailyPriceModel.revision_number.desc(),
+                        DailyPriceModel.available_at.desc(),
+                        DailyPriceModel.id.desc(),
+                    ),
+                )
+                .label("revision_rank"),
+            )
+            .where(*conditions)
+            .subquery()
+        )
+        latest_per_date = (
+            select(
+                ranked_revisions.c.record_id,
+                DailyPriceModel.source_id.label("source_id"),
+                DailyPriceModel.observation_date.label("observation_date"),
+            )
+            .join(
+                DailyPriceModel,
+                DailyPriceModel.id == ranked_revisions.c.record_id,
+            )
+            .where(ranked_revisions.c.revision_rank == 1)
+            .subquery()
+        )
+        ranked_dates = select(
+            latest_per_date.c.record_id,
+            func.row_number()
+            .over(
+                partition_by=latest_per_date.c.source_id,
+                order_by=latest_per_date.c.observation_date.desc(),
+            )
+            .label("lookback_rank"),
+        ).subquery()
+        record_ids = select(ranked_dates.c.record_id).where(
+            ranked_dates.c.lookback_rank <= limit_per_source
+        )
+        rows = self._session.scalars(
+            select(DailyPriceModel)
+            .where(DailyPriceModel.id.in_(record_ids))
+            .order_by(DailyPriceModel.observation_date, DailyPriceModel.source_id)
+        )
+        return [self._to_entity(row) for row in rows]
 
     def get_latest_available(
         self, security_id: int, as_of: datetime, source_id: int | None = None
@@ -305,6 +378,79 @@ class SQLAlchemyFxRateRepository(FxRateRepository):
                 key=lambda item: (item.observation_date, item.source_id),
             )
         ]
+
+    def get_preceding_by_pair(
+        self,
+        pair: CurrencyPair,
+        start_date: date,
+        as_of: datetime,
+        source_id: int | None = None,
+        *,
+        limit_per_source: int = 20,
+    ) -> list[FxRate]:
+        if limit_per_source < 1:
+            raise DomainValidationError("Lookback limit must be positive.")
+        cutoff = _as_utc(as_of)
+        conditions = [
+            FxRateModel.base_currency == pair.base_currency,
+            FxRateModel.quote_currency == pair.quote_currency,
+            FxRateModel.observation_date < start_date,
+            FxRateModel.observation_date <= cutoff.date(),
+            FxRateModel.available_at <= cutoff,
+        ]
+        if source_id is not None:
+            conditions.append(FxRateModel.source_id == source_id)
+        ranked_revisions = (
+            select(
+                FxRateModel.id.label("record_id"),
+                func.row_number()
+                .over(
+                    partition_by=(
+                        FxRateModel.source_id,
+                        FxRateModel.observation_date,
+                    ),
+                    order_by=(
+                        FxRateModel.revision_number.desc(),
+                        FxRateModel.available_at.desc(),
+                        FxRateModel.id.desc(),
+                    ),
+                )
+                .label("revision_rank"),
+            )
+            .where(*conditions)
+            .subquery()
+        )
+        latest_per_date = (
+            select(
+                ranked_revisions.c.record_id,
+                FxRateModel.source_id.label("source_id"),
+                FxRateModel.observation_date.label("observation_date"),
+            )
+            .join(FxRateModel, FxRateModel.id == ranked_revisions.c.record_id)
+            .where(ranked_revisions.c.revision_rank == 1)
+            .subquery()
+        )
+        ranked_dates = select(
+            latest_per_date.c.record_id,
+            func.row_number()
+            .over(
+                partition_by=latest_per_date.c.source_id,
+                order_by=latest_per_date.c.observation_date.desc(),
+            )
+            .label("lookback_rank"),
+        ).subquery()
+        record_ids = select(ranked_dates.c.record_id).where(
+            ranked_dates.c.lookback_rank <= limit_per_source
+        )
+        rows = self._session.scalars(
+            select(FxRateModel)
+            .where(FxRateModel.id.in_(record_ids))
+            .order_by(
+                FxRateModel.observation_date,
+                FxRateModel.source_id,
+            )
+        )
+        return [self._to_entity(row) for row in rows]
 
     def get_latest_available(
         self, pair: CurrencyPair, as_of: datetime, source_id: int | None = None

@@ -14,6 +14,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -142,6 +143,10 @@ class DataAnomalyModel(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     explanation: Mapped[str] = mapped_column(Text, nullable=False)
+    version_id: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
+    __mapper_args__ = {"version_id_col": version_id}
 
 
 class DataAnomalyLifecycleEventModel(Base):

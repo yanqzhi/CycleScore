@@ -148,6 +148,18 @@ class DailyPriceRepository(ABC):
         """Return the latest available revision per source/date in date order."""
 
     @abstractmethod
+    def get_preceding_by_security(
+        self,
+        security_id: int,
+        start_date: date,
+        as_of: datetime,
+        source_id: int | None = None,
+        *,
+        limit_per_source: int = 20,
+    ) -> list[DailyPrice]:
+        """Return up to N latest eligible observations before start per source."""
+
+    @abstractmethod
     def get_latest_available(
         self, security_id: int, as_of: datetime, source_id: int | None = None
     ) -> DailyPrice | None:
@@ -186,6 +198,18 @@ class FxRateRepository(ABC):
         source_id: int | None = None,
     ) -> list[FxRate]:
         """Return latest available revisions per source/date in date order."""
+
+    @abstractmethod
+    def get_preceding_by_pair(
+        self,
+        pair: CurrencyPair,
+        start_date: date,
+        as_of: datetime,
+        source_id: int | None = None,
+        *,
+        limit_per_source: int = 20,
+    ) -> list[FxRate]:
+        """Return up to N latest eligible rates before start per source."""
 
     @abstractmethod
     def get_latest_available(

@@ -7,6 +7,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session as SqlAlchemySession
 
 from cyclescope.application.dto.data_quality import (
     FxQualityRequest,
@@ -20,7 +21,10 @@ from cyclescope.application.use_cases.revision_management import (
     MarketDataRevisionManagement,
 )
 from cyclescope.domain.entities import DailyPrice, FxRate
-from cyclescope.domain.entities.data_quality import DataAnomaly
+from cyclescope.domain.entities.data_quality import (
+    DataAnomaly,
+    DataAnomalyLifecycleEvent,
+)
 from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.domain.value_objects.data_quality import (
     AnomalySeverity,
@@ -134,6 +138,12 @@ def test_quality_report_and_missing_anomaly_persist_and_transition(session):
         actor="analyst@example.test",
     )
     assert updated.status == AnomalyStatus.ACKNOWLEDGED
+    with pytest.raises(DomainValidationError, match="must use transition_anomaly"):
+        quality.update_anomaly(
+            updated.transition(AnomalyStatus.RESOLVED, AS_OF + timedelta(hours=2))
+        )
+    assert len(quality.list_anomaly_events(anomaly.id)) == 1
+    assert quality.get_anomaly(anomaly.id).status == AnomalyStatus.ACKNOWLEDGED
     with pytest.raises(DomainValidationError, match="back to OPEN"):
         ManageMarketDataAnomaly(quality).transition(
             anomaly.id, AnomalyStatus.OPEN, AS_OF + timedelta(minutes=90)
@@ -154,6 +164,74 @@ def test_quality_report_and_missing_anomaly_persist_and_transition(session):
     stored = session.get(DataAnomalyModel, anomaly.id)
     assert stored is not None and stored.status == "RESOLVED"
     assert session.query(DataAnomalyLifecycleEventModel).count() == 2
+
+
+def test_optimistic_lock_allows_only_one_competing_transition(session, monkeypatch):
+    source_id, security_id = refs(session)
+    stored = DataAnomalyModel(
+        dataset_type="DAILY_PRICE",
+        security_id=security_id,
+        observation_date=date(2026, 1, 5),
+        source_id=source_id,
+        revision_number=1,
+        anomaly_type="PRICE_MOVE",
+        severity="WARNING",
+        detection_rule="test",
+        detection_rule_version="1",
+        detected_at=AS_OF,
+        status="OPEN",
+        explanation="Concurrent transition test.",
+    )
+    session.add(stored)
+    session.commit()
+    anomaly_id = stored.id
+
+    competing_session = SqlAlchemySession(bind=session.get_bind())
+    first_repository = SQLAlchemyDataQualityRepository(session)
+    second_repository = SQLAlchemyDataQualityRepository(competing_session)
+    first = first_repository.get_anomaly(anomaly_id)
+    second = second_repository.get_anomaly(anomaly_id)
+    assert first is not None and second is not None
+    stale_model = competing_session.get(DataAnomalyModel, anomaly_id)
+    assert stale_model is not None
+    original_get = competing_session.get
+
+    def get_stale_anomaly(model, entity_id, *args, **kwargs):
+        if model is DataAnomalyModel and entity_id == anomaly_id:
+            return stale_model
+        return original_get(model, entity_id, *args, **kwargs)
+
+    monkeypatch.setattr(competing_session, "get", get_stale_anomaly)
+
+    first_at = AS_OF + timedelta(minutes=1)
+    first_repository.transition_anomaly(
+        first.transition(AnomalyStatus.ACKNOWLEDGED, first_at),
+        DataAnomalyLifecycleEvent(
+            anomaly_id,
+            AnomalyStatus.OPEN,
+            AnomalyStatus.ACKNOWLEDGED,
+            first_at,
+            actor="first",
+        ),
+    )
+    session.commit()
+
+    second_at = AS_OF + timedelta(minutes=2)
+    with pytest.raises(DomainValidationError, match="changed concurrently"):
+        second_repository.transition_anomaly(
+            second.transition(AnomalyStatus.RESOLVED, second_at),
+            DataAnomalyLifecycleEvent(
+                anomaly_id,
+                AnomalyStatus.OPEN,
+                AnomalyStatus.RESOLVED,
+                second_at,
+            ),
+        )
+    competing_session.rollback()
+    competing_session.close()
+
+    assert first_repository.get_anomaly(anomaly_id).status == AnomalyStatus.ACKNOWLEDGED
+    assert len(first_repository.list_anomaly_events(anomaly_id)) == 1
 
 
 def test_price_quality_score_is_calculated_with_sufficient_history(session):
@@ -203,6 +281,126 @@ def test_quality_workflow_loads_pre_report_price_history_only_for_outliers(sessi
     assert result.report.available_records == 1
     assert result.report.first_available_date == report_day
     assert result.report.last_available_date == report_day
+
+
+def test_price_lookback_is_limited_per_source_and_point_in_time(session):
+    source_one, security_id = refs(session)
+    source_two_model = DataSourceModel(
+        code="QUALITY_SECOND", name="Second quality test", provider_type="test"
+    )
+    session.add(source_two_model)
+    session.flush()
+    source_two = source_two_model.id
+    repository = SQLAlchemyDailyPriceRepository(session)
+    report_start = date(2026, 1, 12)
+    prior_days = [report_start - timedelta(days=offset) for offset in range(1, 26)]
+
+    for source_id in (source_one, source_two):
+        for day in prior_days:
+            repository.save(
+                price(
+                    security_id,
+                    source_id,
+                    day,
+                    "10",
+                    1,
+                    AS_OF - timedelta(days=30),
+                )
+            )
+            revised_at = (
+                AS_OF - timedelta(hours=1)
+                if day == report_start - timedelta(days=1)
+                else AS_OF + timedelta(hours=1)
+            )
+            repository.save(price(security_id, source_id, day, "11", 2, revised_at))
+
+    # The start date is excluded from lookback; future dates are excluded too.
+    repository.save(price(security_id, source_one, report_start, "12", 1, AS_OF))
+    repository.save(
+        price(security_id, source_one, report_start + timedelta(days=1), "13", 1, AS_OF)
+    )
+
+    selected = repository.get_preceding_by_security(
+        security_id, report_start, AS_OF, limit_per_source=20
+    )
+    expected_days = set(sorted(prior_days)[-20:])
+    assert len(selected) == 40
+    assert {row.source_id for row in selected} == {source_one, source_two}
+    assert {
+        row.observation_date for row in selected if row.source_id == source_one
+    } == (expected_days)
+    assert all(row.observation_date < report_start for row in selected)
+    assert all(
+        row.revision_number == 1
+        for row in selected
+        if row.observation_date != report_start - timedelta(days=1)
+    )
+    selected_revision = next(
+        row
+        for row in selected
+        if row.source_id == source_one
+        and row.observation_date == report_start - timedelta(days=1)
+    )
+    assert selected_revision.revision_number == 2
+    assert selected_revision.close == Decimal("11")
+
+    scoped = repository.get_preceding_by_security(
+        security_id,
+        report_start,
+        AS_OF,
+        source_one,
+        limit_per_source=20,
+    )
+    assert len(scoped) == 20 and {row.source_id for row in scoped} == {source_one}
+    after_revision = repository.get_preceding_by_security(
+        security_id,
+        report_start,
+        AS_OF + timedelta(hours=2),
+        source_one,
+        limit_per_source=20,
+    )
+    assert all(row.revision_number == 2 for row in after_revision)
+
+
+def test_fx_lookback_is_source_scoped_and_cutoff_aware(session):
+    source_one, _ = refs(session)
+    source_two_model = DataSourceModel(
+        code="FX_SECOND", name="Second FX test", provider_type="test"
+    )
+    session.add(source_two_model)
+    session.flush()
+    source_two = source_two_model.id
+    repository = SQLAlchemyFxRateRepository(session)
+    start = date(2026, 1, 12)
+    for source_id in (source_one, source_two):
+        for offset in (1, 2):
+            observation_date = start - timedelta(days=offset)
+            for revision, rate, available_at in (
+                (1, "150", AS_OF - timedelta(days=1)),
+                (2, "151", AS_OF + timedelta(hours=1)),
+            ):
+                repository.save(
+                    FxRate(
+                        base_currency="USD",
+                        quote_currency="JPY",
+                        observation_date=observation_date,
+                        rate=Decimal(rate),
+                        source_id=source_id,
+                        publication_date=None,
+                        available_at=available_at,
+                        collected_at=available_at + timedelta(minutes=5),
+                        revision_number=revision,
+                        created_at=available_at,
+                        updated_at=available_at,
+                    )
+                )
+    selected = repository.get_preceding_by_pair(
+        CurrencyPair("USD", "JPY"), start, AS_OF, limit_per_source=20
+    )
+    assert len(selected) == 4
+    assert {row.source_id for row in selected} == {source_one, source_two}
+    assert all(row.revision_number == 1 for row in selected)
+    assert all(row.observation_date < start for row in selected)
 
 
 def test_quality_persistence_respects_caller_rollback(session):

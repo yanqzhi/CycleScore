@@ -74,7 +74,7 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
             ).scalar_one()
-            == "0009_anomaly_lifecycle_events"
+            == "0010_anomaly_optimistic_lock"
         )
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
         assert (
@@ -84,6 +84,12 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             ).scalar_one()
             == "data_anomaly_lifecycle_events"
         )
+        version_column = next(
+            row
+            for row in connection.exec_driver_sql("PRAGMA table_info(data_anomalies)")
+            if row[1] == "version_id"
+        )
+        assert version_column[3] == 1 and version_column[4] == "1"
     engine.dispose()
 
 

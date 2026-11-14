@@ -9,6 +9,11 @@ from cyclescope.domain.entities.data_quality import (
     DataAnomalyLifecycleEvent,
     DataQualityReport,
 )
+from cyclescope.domain.exceptions import DomainValidationError
+
+
+class TradingCalendarNotConfigured(DomainValidationError):
+    """Expected-calendar lookup failed because no calendar is registered."""
 
 
 class TradingCalendar(Protocol):
@@ -30,9 +35,6 @@ class DataQualityRepository(ABC):
 
     @abstractmethod
     def get_anomaly(self, anomaly_id: int) -> DataAnomaly | None: ...
-
-    @abstractmethod
-    def update_anomaly(self, anomaly: DataAnomaly) -> DataAnomaly: ...
 
     @abstractmethod
     def transition_anomaly(

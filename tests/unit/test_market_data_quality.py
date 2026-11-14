@@ -9,6 +9,7 @@ from cyclescope.application.dto.data_quality import (
     FxQualityRequest,
     PriceQualityRequest,
 )
+from cyclescope.application.interfaces.data_quality import TradingCalendarNotConfigured
 from cyclescope.application.use_cases.market_data_quality import (
     MarketDataQualityAssessor,
 )
@@ -129,6 +130,84 @@ def test_unknown_calendar_and_zero_expected_sessions_are_explicit():
     assert not_applicable.report.expected_sessions == 0
     assert not_applicable.report.coverage_ratio is None
     assert not_applicable.report.score is None
+
+
+def test_unregistered_exchange_calendar_is_insufficient_without_missing_anomalies():
+    request = PriceQualityRequest(10, date(2026, 1, 5), date(2026, 1, 5), 1, AS_OF, 99)
+    result = MarketDataQualityAssessor().assess_prices(
+        request,
+        (price(date(2026, 1, 5), "10"),),
+        WeekdayTradingCalendar({"EXCHANGE:7": ()}),
+        detected_at=NOW,
+    )
+    assert result.report.calendar_status == CalendarStatus.UNKNOWN_CALENDAR
+    assert result.report.status == QualityStatus.INSUFFICIENT_DATA
+    assert result.report.score is None
+    assert not any(
+        item.anomaly_type == AnomalyType.MISSING_SESSION for item in result.anomalies
+    )
+
+
+def test_fx_calendar_not_configured_is_reported_as_unknown():
+    request = FxQualityRequest(
+        "USD", "JPY", date(2026, 1, 5), date(2026, 1, 6), 1, AS_OF
+    )
+    result = MarketDataQualityAssessor().assess_fx(
+        request,
+        (fx(date(2026, 1, 5), "150"), fx(date(2026, 1, 6), "151")),
+        WeekdayTradingCalendar({"EXCHANGE:7": ()}),
+        detected_at=NOW,
+    )
+    assert result.report.calendar_status == CalendarStatus.UNKNOWN_CALENDAR
+    assert result.report.status == QualityStatus.INSUFFICIENT_DATA
+    assert result.report.score is None
+    assert not any(
+        item.anomaly_type == AnomalyType.MISSING_SESSION for item in result.anomalies
+    )
+
+
+def test_absent_calendar_and_unexpected_calendar_errors_are_distinguished():
+    request = PriceQualityRequest(10, date(2026, 1, 5), date(2026, 1, 5), 1, AS_OF, 7)
+    absent = MarketDataQualityAssessor().assess_prices(
+        request, (price(date(2026, 1, 5), "10"),), None, detected_at=NOW
+    )
+    assert absent.report.calendar_status == CalendarStatus.UNKNOWN_CALENDAR
+    assert absent.report.status == QualityStatus.INSUFFICIENT_DATA
+    assert absent.report.score is None
+    assert not any(
+        item.anomaly_type == AnomalyType.MISSING_SESSION for item in absent.anomalies
+    )
+
+    class BrokenCalendar:
+        def expected_sessions(self, calendar_id, start_date, end_date):
+            raise RuntimeError("calendar backend failed")
+
+    with pytest.raises(RuntimeError, match="calendar backend failed"):
+        MarketDataQualityAssessor().assess_prices(
+            request,
+            (price(date(2026, 1, 5), "10"),),
+            BrokenCalendar(),
+            detected_at=NOW,
+        )
+
+
+def test_configured_calendar_retains_normal_coverage():
+    start = date(2026, 1, 5)
+    end = date(2026, 1, 12)
+    rows = tuple(
+        price(start + timedelta(days=offset), "10") for offset in (0, 1, 2, 3, 4, 7)
+    )
+    request = PriceQualityRequest(10, start, end, 1, AS_OF, 7)
+    result = MarketDataQualityAssessor().assess_prices(
+        request,
+        rows,
+        WeekdayTradingCalendar({"EXCHANGE:7": ()}),
+        detected_at=NOW,
+    )
+    assert result.report.calendar_status == CalendarStatus.KNOWN
+    assert result.report.expected_sessions == 6
+    assert result.report.coverage_ratio == Decimal("100")
+    assert result.report.status == QualityStatus.PASS
 
 
 def test_price_move_and_volume_outlier_are_candidates_not_corrections():
@@ -347,7 +426,7 @@ def test_anomaly_lifecycle_is_explicit_and_terminal():
 
 
 def test_unknown_calendar_type_is_rejected_by_concrete_calendar():
-    with pytest.raises(DomainValidationError, match="Unknown trading calendar"):
+    with pytest.raises(TradingCalendarNotConfigured, match="Unknown trading calendar"):
         WeekdayTradingCalendar({}).expected_sessions(
             "EXCHANGE:404", date(2026, 1, 1), date(2026, 1, 2)
         )
