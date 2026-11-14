@@ -108,8 +108,11 @@ class SQLAlchemyRawDataRepository(RawDataRecordRepository):
             source_cursor=record.source_cursor,
             provider_request_id=record.provider_request_id,
         )
-        self.session.add(row)
-        self.session.flush()
+        # Keep a failed raw insert from poisoning the caller-owned transaction;
+        # the pipeline still needs to persist a FAILED run in that transaction.
+        with self.session.begin_nested():
+            self.session.add(row)
+            self.session.flush()
         return _raw_entity(row)
 
     def get_by_id(self, record_id: int) -> RawDataRecord | None:

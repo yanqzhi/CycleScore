@@ -14,7 +14,10 @@ from cyclescope.application.dto.ingestion import (
     IngestionErrorCode,
     PipelineIssue,
 )
-from cyclescope.application.use_cases.ingestion import ExecuteDataIngestionPipeline
+from cyclescope.application.use_cases.ingestion import (
+    ExecuteDataIngestionPipeline,
+    sanitize_error_message,
+)
 from cyclescope.domain.entities.ingestion import IngestionRun, RawDataRecord
 from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.domain.value_objects.ingestion import IngestionStatus
@@ -267,6 +270,16 @@ def test_request_metadata_and_run_transitions_are_validated():
             accepted_count=1,
             rejected_count=1,
         )
+
+
+def test_error_sanitizer_redacts_authorization_and_secret_values():
+    message = sanitize_error_message(
+        "Authorization: Bearer abc123 api_key=xyz789 password: 'open sesame'"
+    )
+    assert "abc123" not in message
+    assert "xyz789" not in message
+    assert "open sesame" not in message
+    assert message.count("[REDACTED]") == 3
 
 
 def test_ingestion_migration_preserves_financial_rows_on_upgrade_and_downgrade(

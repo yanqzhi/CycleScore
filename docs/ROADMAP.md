@@ -7,11 +7,12 @@
 - Sprint 03: Security, exchange, identifier, and listing normalization.
 - Sprint 04: Point-in-time financial statement, item, mapping, and revision foundation.
 - Sprint 05: Generic data-ingestion contracts, raw acquisition retention, run tracking, and mock end-to-end orchestration.
+- Sprint 06: CSV `prices.daily` and `fx.daily` integration with shared DTOs and validation, existing repository idempotency, and normalized SAVEPOINT persistence.
 
 ## Recommended next step
 
-Connect the generic pipeline to one existing dataset in a narrow follow-up, preferably the CSV market-data adapter. Reuse existing price/FX validation and repository natural keys; verify raw replay, retry idempotency, and caller-owned transaction behavior. Keep live providers, scheduling, parallel workers, financial taxonomy automation, and analytical engines in later work.
+Add a dedicated raw replay workflow and decide whether financial statement imports need the same pipeline. Keep live providers, scheduling, parallel workers, taxonomy automation, and analytical engines in later work.
 
 ## Current boundary
 
-Sprint 05 provides mock adapters only. It does not replace current market-data or financial-data use cases and does not establish a production provider or dataset-specific normalized persistence adapter.
+Sprint 06 adds CSV only for daily prices and FX. Other CSV datasets, financial statement integration, live providers (including IBKR), and automated scheduling remain out of scope.

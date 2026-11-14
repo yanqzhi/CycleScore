@@ -11,9 +11,17 @@ from cyclescope.application.dto.market_data import (
     PriceImportSummary,
     ValidationIssue,
 )
+from cyclescope.application.dto.market_data_ingestion import (
+    DailyPriceIngestionContext,
+    FxRateIngestionContext,
+)
 from cyclescope.application.interfaces.market_data import (
     FxRateProvider,
     HistoricalPriceProvider,
+)
+from cyclescope.application.use_cases.market_data_validation import (
+    daily_price_from_record,
+    fx_rate_from_record,
 )
 from cyclescope.domain.entities import DailyPrice, FxRate
 from cyclescope.domain.repositories.contracts import (
@@ -63,47 +71,15 @@ class ImportHistoricalPrices:
         duplicate_count = 0
         for row in rows:
             try:
-                if row.parsing_errors:
-                    errors.append(
-                        ValidationIssue(row.row_number, "; ".join(row.parsing_errors))
-                    )
-                    continue
-                observation_date = row.observation_date
-                if observation_date is None:
-                    raise ValueError("date is required.")
-                open_price, high_price, low_price, close_price = (
-                    row.open,
-                    row.high,
-                    row.low,
-                    row.close,
-                )
-                if None in (open_price, high_price, low_price, close_price):
-                    raise ValueError("open, high, low, and close are required.")
-                assert open_price is not None
-                assert high_price is not None
-                assert low_price is not None
-                assert close_price is not None
-                if row.volume is None or row.volume < 0:
-                    raise ValueError("volume must be a non-negative whole number.")
-                now = datetime.now(UTC)
-                price = DailyPrice(
+                context = DailyPriceIngestionContext(
                     security_id=request.request.security_id,
-                    observation_date=observation_date,
-                    open=open_price,
-                    high=high_price,
-                    low=low_price,
-                    close=close_price,
-                    adjusted_close=row.adjusted_close,
-                    volume=row.volume,
                     currency=currency,
                     source_id=request.source_id,
-                    publication_date=row.publication_date,
                     available_at=available_at,
                     collected_at=collected_at,
                     revision_number=request.revision_number,
-                    created_at=now,
-                    updated_at=now,
                 )
+                price = daily_price_from_record(row, context)
                 if self._repository.exists(
                     price.security_id,
                     price.observation_date,
@@ -148,33 +124,21 @@ class ImportFxRates:
         duplicate_count = 0
         for row in rows:
             try:
-                if row.parsing_errors:
-                    errors.append(
-                        ValidationIssue(row.row_number, "; ".join(row.parsing_errors))
-                    )
-                    continue
                 if row.base_currency is None or row.quote_currency is None:
                     raise ValueError("base_currency and quote_currency are required.")
                 pair = CurrencyPair(
                     row.base_currency.strip().upper(),
                     row.quote_currency.strip().upper(),
                 )
-                observation_date = row.observation_date
-                if observation_date is None:
-                    raise ValueError("date is required.")
-                if row.rate is None:
-                    raise ValueError("rate is required.")
-                rate = FxRate(
+                context = FxRateIngestionContext(
                     base_currency=pair.base_currency,
                     quote_currency=pair.quote_currency,
-                    observation_date=observation_date,
-                    rate=row.rate,
                     source_id=request.source_id,
-                    publication_date=row.publication_date,
                     available_at=available_at,
                     collected_at=collected_at,
                     revision_number=request.revision_number,
                 )
+                rate = fx_rate_from_record(row, context)
                 if self._repository.exists(
                     pair,
                     rate.observation_date,

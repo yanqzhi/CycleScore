@@ -74,6 +74,8 @@ class IngestionRun:
             object.__setattr__(
                 self, "completed_at", _utc("completed_at", self.completed_at)
             )
+            if self.completed_at < self.started_at:
+                raise DomainValidationError("completed_at must not precede started_at.")
         if self.status == IngestionStatus.RUNNING and self.completed_at is not None:
             raise DomainValidationError("RUNNING runs cannot have completed_at.")
         if self.status != IngestionStatus.RUNNING and self.completed_at is None:

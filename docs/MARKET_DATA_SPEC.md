@@ -55,3 +55,6 @@ CSV syntax and primitive conversion happens in the CSV adapter. Parse failures a
 ## Current limitations
 
 The CSV adapter is invoked from Python application wiring; there is no ingestion CLI, scheduling, live provider, corporate-action adjustment, exchange calendar, or source-priority configuration. When no source is requested, source choice follows the deterministic rule above and may not match a future business preference. Imported revision numbering and `available_at` are trusted metadata supplied by the caller.
+# Pipeline import path
+
+The generic ingestion pipeline supports CSV imports for `prices.daily` and `fx.daily`. It preserves the original CSV bytes in the raw-data table, then parses into the same provider-independent row DTOs used by direct imports. The price/FX validation and normalized persistence rules are shared with existing import use cases; duplicate natural keys are skipped and a later correction must use a new revision. Pipeline imports keep caller-owned transaction semantics, with normalized rows protected by a SAVEPOINT. CSV paths and parsing remain Infrastructure concerns. Future IBKR or API adapters will provide acquired bytes and common normalized records without implementing a CSV interface. See [DATA_PIPELINE_SPEC.md](DATA_PIPELINE_SPEC.md).

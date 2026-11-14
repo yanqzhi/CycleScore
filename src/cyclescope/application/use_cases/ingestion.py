@@ -1,14 +1,20 @@
 """Orchestrate acquisition through idempotent normalized persistence."""
 
+import re
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from cyclescope.application.dto.ingestion import (
     DataFetchRequest,
     EmptyPayloadError,
+    IngestionAdapterError,
     IngestionErrorCode,
+    NormalizedPersistenceResult,
     PipelineExecutionResult,
     PipelineIssue,
+    TransformationResult,
+    ValidationResult,
 )
 from cyclescope.application.interfaces.ingestion import (
     DataSourceAdapter,
@@ -21,6 +27,23 @@ from cyclescope.application.interfaces.ingestion import (
 from cyclescope.domain.entities.ingestion import IngestionRun
 from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.domain.value_objects.ingestion import IngestionStatus
+
+_SENSITIVE_PATTERNS = (
+    re.compile(r"(?i)(authorization\s*[:=]\s*)(?:(?:bearer|basic)\s+)?[^\s,;]+"),
+    re.compile(
+        r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|secret|token)(\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"
+    ),
+    re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+"),
+)
+
+
+def sanitize_error_message(message: str) -> str:
+    """Redact common secret/header forms before returning or storing diagnostics."""
+    sanitized = message
+    sanitized = _SENSITIVE_PATTERNS[0].sub(r"\1[REDACTED]", sanitized)
+    sanitized = _SENSITIVE_PATTERNS[1].sub(r"\1\2[REDACTED]", sanitized)
+    sanitized = _SENSITIVE_PATTERNS[2].sub(r"\1 [REDACTED]", sanitized)
+    return sanitized[:1900]
 
 
 class ExecuteDataIngestionPipeline[NormalizedT]:
@@ -68,6 +91,8 @@ class ExecuteDataIngestionPipeline[NormalizedT]:
             code = (
                 IngestionErrorCode.EMPTY_PAYLOAD
                 if isinstance(exc, EmptyPayloadError)
+                else exc.pipeline_error_code
+                if isinstance(exc, IngestionAdapterError)
                 else IngestionErrorCode.ACQUISITION_FAILED
             )
             return self._failed(run, code, exc)
@@ -102,12 +127,30 @@ class ExecuteDataIngestionPipeline[NormalizedT]:
         try:
             transformed = self.transformer.transform(batch)
         except Exception as exc:
+            code = (
+                exc.pipeline_error_code
+                if isinstance(exc, IngestionAdapterError)
+                else IngestionErrorCode.INVALID_TRANSFORMATION_RESULT
+                if isinstance(exc, DomainValidationError)
+                else IngestionErrorCode.TRANSFORMATION_FAILED
+            )
             return self._failed(
                 run,
-                IngestionErrorCode.TRANSFORMATION_FAILED,
+                code,
                 exc,
                 raw_data_record_id=raw_record.id,
                 fetched_count=0,
+            )
+        if not self._valid_transformation(transformed):
+            return self._failed(
+                run,
+                IngestionErrorCode.INVALID_TRANSFORMATION_RESULT,
+                DomainValidationError(
+                    "Transformer returned inconsistent counts or records."
+                ),
+                raw_data_record_id=raw_record.id,
+                fetched_count=0,
+                transformed_count=0,
             )
         if transformed.transformed_record_count == 0:
             issues.extend(transformed.errors)
@@ -139,6 +182,15 @@ class ExecuteDataIngestionPipeline[NormalizedT]:
                 transformed_count=transformed.transformed_record_count,
             )
 
+        if not self._valid_validation(transformed.records, validation):
+            return self._failed(
+                run,
+                IngestionErrorCode.INVALID_VALIDATION_RESULT,
+                DomainValidationError("Validator returned inconsistent record counts."),
+                raw_data_record_id=raw_record.id,
+                fetched_count=transformed.source_record_count,
+                transformed_count=transformed.transformed_record_count,
+            )
         issues.extend(transformed.errors)
         issues.extend(validation.errors)
         for rejected in validation.rejected_records:
@@ -149,11 +201,19 @@ class ExecuteDataIngestionPipeline[NormalizedT]:
                 persistence = self.normalized_persistence.persist_atomically(
                     validation.valid_records
                 )
-                if persistence.inserted_count + persistence.duplicate_count != len(
-                    validation.valid_records
+                if not isinstance(persistence, NormalizedPersistenceResult) or (
+                    persistence.inserted_count + persistence.duplicate_count
+                    != len(validation.valid_records)
                 ):
-                    raise DomainValidationError(
-                        "Normalized persistence counts do not match input records."
+                    return self._failed(
+                        run,
+                        IngestionErrorCode.INVALID_PERSISTENCE_RESULT,
+                        DomainValidationError(
+                            "Normalized persistence counts do not match input records."
+                        ),
+                        raw_data_record_id=raw_record.id,
+                        fetched_count=transformed.source_record_count,
+                        transformed_count=transformed.transformed_record_count,
                     )
             except Exception as exc:
                 return self._failed(
@@ -185,6 +245,42 @@ class ExecuteDataIngestionPipeline[NormalizedT]:
             finished, validation.valid_records, validation.warnings, tuple(issues)
         )
 
+    @staticmethod
+    def _valid_transformation(result: object) -> bool:
+        if not isinstance(result, TransformationResult):
+            return False
+        return (
+            isinstance(result.records, tuple)
+            and isinstance(result.errors, tuple)
+            and isinstance(result.source_record_count, int)
+            and not isinstance(result.source_record_count, bool)
+            and isinstance(result.transformed_record_count, int)
+            and not isinstance(result.transformed_record_count, bool)
+            and result.source_record_count >= 0
+            and result.transformed_record_count == len(result.records)
+            and result.transformed_record_count <= result.source_record_count
+        )
+
+    @staticmethod
+    def _valid_validation(records: tuple[NormalizedT, ...], result: object) -> bool:
+        if not isinstance(result, ValidationResult):
+            return False
+        if not all(
+            isinstance(value, tuple)
+            for value in (
+                result.valid_records,
+                result.rejected_records,
+                result.warnings,
+                result.errors,
+            )
+        ):
+            return False
+        if any(not item.errors for item in result.rejected_records):
+            return False
+        # Validators may normalize DTOs into Domain entities. Their contract is
+        # one output (valid or rejected) per input; equality is not meaningful.
+        return len(result.valid_records) + len(result.rejected_records) == len(records)
+
     def _failed(
         self,
         run: IngestionRun,
@@ -195,7 +291,9 @@ class ExecuteDataIngestionPipeline[NormalizedT]:
         fetched_count: int = 0,
         transformed_count: int = 0,
     ) -> PipelineExecutionResult[NormalizedT]:
-        issue = PipelineIssue(code, f"{type(exc).__name__}: {exc}")
+        issue = PipelineIssue(
+            code, sanitize_error_message(f"{type(exc).__name__}: {exc}")
+        )
         result_run = self._finish(
             run,
             IngestionStatus.FAILED,
@@ -219,6 +317,11 @@ class ExecuteDataIngestionPipeline[NormalizedT]:
         rejected_count: int = 0,
         duplicate_count: int = 0,
     ) -> IngestionRun:
+        safe_issues = [
+            replace(issue, message=sanitize_error_message(issue.message))
+            for issue in issues
+        ]
+        issues[:] = safe_issues
         error_code = issues[0].code.value if issues else None
         error_message = "; ".join(issue.message for issue in issues) or None
         completed = run.finish(

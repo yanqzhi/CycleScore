@@ -115,6 +115,11 @@ class IngestionErrorCode(StrEnum):
     VALIDATION_FAILED = "VALIDATION_FAILED"
     NORMALIZED_PERSISTENCE_FAILED = "NORMALIZED_PERSISTENCE_FAILED"
     NO_RECORDS = "NO_RECORDS"
+    UNKNOWN_DATASET = "UNKNOWN_DATASET"
+    INVALID_VALIDATION_RESULT = "INVALID_VALIDATION_RESULT"
+    INVALID_PERSISTENCE_RESULT = "INVALID_PERSISTENCE_RESULT"
+    DUPLICATE_RECORD = "DUPLICATE_RECORD"
+    INVALID_CSV = "INVALID_CSV"
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +127,14 @@ class PipelineIssue:
     code: IngestionErrorCode
     message: str
     source_location: str | None = None
+
+
+class IngestionAdapterError(DomainValidationError):
+    """Typed infrastructure acquisition error surfaced by the generic pipeline."""
+
+    def __init__(self, code: IngestionErrorCode, message: str) -> None:
+        super().__init__(message)
+        self.pipeline_error_code = code
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +145,17 @@ class TransformationResult[NormalizedT]:
     transformed_record_count: int
 
     def __post_init__(self) -> None:
+        if not isinstance(self.records, tuple) or not isinstance(self.errors, tuple):
+            raise DomainValidationError(
+                "Transformation results must use immutable tuples."
+            )
+        if (
+            not isinstance(self.source_record_count, int)
+            or isinstance(self.source_record_count, bool)
+            or not isinstance(self.transformed_record_count, int)
+            or isinstance(self.transformed_record_count, bool)
+        ):
+            raise DomainValidationError("Transformation counts must be integers.")
         if self.source_record_count < 0 or self.transformed_record_count < 0:
             raise DomainValidationError(
                 "Transformation record counts must be non-negative."
@@ -159,9 +183,25 @@ class RejectedRecord[NormalizedT]:
 @dataclass(frozen=True, slots=True)
 class ValidationResult[NormalizedT]:
     valid_records: tuple[NormalizedT, ...]
-    rejected_records: tuple[RejectedRecord[NormalizedT], ...]
+    rejected_records: tuple[RejectedRecord[object], ...]
     warnings: tuple[PipelineIssue, ...] = ()
     errors: tuple[PipelineIssue, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not all(
+            isinstance(value, tuple)
+            for value in (
+                self.valid_records,
+                self.rejected_records,
+                self.warnings,
+                self.errors,
+            )
+        ):
+            raise DomainValidationError("Validation results must use immutable tuples.")
+        if any(not isinstance(item, RejectedRecord) for item in self.rejected_records):
+            raise DomainValidationError(
+                "rejected_records must contain RejectedRecord values."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +210,11 @@ class NormalizedPersistenceResult:
     duplicate_count: int
 
     def __post_init__(self) -> None:
+        if any(
+            not isinstance(count, int) or isinstance(count, bool)
+            for count in (self.inserted_count, self.duplicate_count)
+        ):
+            raise DomainValidationError("Persistence counts must be integers.")
         if self.inserted_count < 0 or self.duplicate_count < 0:
             raise DomainValidationError("Persistence counts must be non-negative.")
 
