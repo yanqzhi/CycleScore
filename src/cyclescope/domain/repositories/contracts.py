@@ -22,6 +22,11 @@ from cyclescope.domain.entities.listing_status_event import ListingStatusEvent
 from cyclescope.domain.entities.security import Security
 from cyclescope.domain.entities.security_identifier import SecurityIdentifier
 from cyclescope.domain.entities.sub_industry import SubIndustry
+from cyclescope.domain.entities.valuation import (
+    ValuationMetricCode,
+    ValuationMetricDefinition,
+    ValuationMetricValue,
+)
 from cyclescope.domain.value_objects.financial_data import (
     ConsolidationScope,
     FiscalPeriod,
@@ -343,6 +348,53 @@ class FinancialItemMappingRepository(ABC):
         source_item_code: str,
         accounting_standard: str | None = None,
     ) -> FinancialItemMapping | None: ...
+
+
+class ValuationMetricRepository(ABC):
+    """Read and register versioned standardized metric definitions."""
+
+    @abstractmethod
+    def create(
+        self, metric: ValuationMetricDefinition
+    ) -> ValuationMetricDefinition: ...
+
+    @abstractmethod
+    def get_by_code(
+        self, metric_code: ValuationMetricCode
+    ) -> ValuationMetricDefinition | None: ...
+
+    @abstractmethod
+    def list_active(self) -> list[ValuationMetricDefinition]: ...
+
+
+class ValuationMetricValueRepository(ABC):
+    """Append-only persistence and point-in-time retrieval for metric values."""
+
+    @abstractmethod
+    def create(self, value: ValuationMetricValue) -> ValuationMetricValue: ...
+
+    @abstractmethod
+    def get_as_of(
+        self,
+        security_id: int,
+        metric_code: ValuationMetricCode,
+        observation_date: date,
+        as_of: datetime,
+    ) -> ValuationMetricValue | None: ...
+
+    @abstractmethod
+    def get_by_id(self, snapshot_id: int) -> ValuationMetricValue | None: ...
+
+    @abstractmethod
+    def list_by_security(
+        self,
+        security_id: int,
+        metric_code: ValuationMetricCode | None = None,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        as_of: datetime | None = None,
+    ) -> list[ValuationMetricValue]: ...
 
 
 class RawDataRecordRepository(ABC):

@@ -28,6 +28,11 @@ from cyclescope.infrastructure.database.models.master_data import (
     SecurityModel,
     SubIndustryModel,
 )
+from cyclescope.infrastructure.database.models.valuation import (
+    HistoricalValuationMetricModel,
+    ValuationMetricModel,
+    ValuationSnapshotInputModel,
+)
 
 __all__ = [
     "CompanyModel",
@@ -52,6 +57,9 @@ __all__ = [
     "FinancialItemModel",
     "FinancialStatementItemModel",
     "FinancialStatementModel",
+    "ValuationMetricModel",
+    "HistoricalValuationMetricModel",
+    "ValuationSnapshotInputModel",
 ]
 
 from cyclescope.infrastructure.database.models.ingestion import (

@@ -20,12 +20,14 @@ from cyclescope.domain.entities import (
 from cyclescope.infrastructure.database.initialize import (
     INITIAL_INDUSTRIES,
     seed_industries,
+    seed_valuation_metrics,
 )
 from cyclescope.infrastructure.database.models import (
     CompanyIndustryExposureModel,
     CompanyModel,
     IndustryModel,
     SubIndustryModel,
+    ValuationMetricModel,
 )
 from cyclescope.infrastructure.database.repositories.master_data import (
     CompanySqlAlchemyRepository,
@@ -47,6 +49,27 @@ def test_seed_is_repeatable(session: Session) -> None:
     seed_industries(session)
     session.commit()
     assert session.query(IndustryModel).count() == 7
+
+
+def test_valuation_metric_seed_is_repeatable_and_preserves_existing_values(
+    session: Session,
+) -> None:
+    seed_valuation_metrics(session)
+    session.commit()
+    assert session.query(ValuationMetricModel).count() == 8
+    metric = session.query(ValuationMetricModel).filter_by(metric_code="PER").one()
+    metric.metric_name = "User-customized PER"
+    session.commit()
+    seed_valuation_metrics(session)
+    session.commit()
+    assert session.query(ValuationMetricModel).count() == 8
+    assert (
+        session.query(ValuationMetricModel)
+        .filter_by(metric_code="PER")
+        .one()
+        .metric_name
+        == "User-customized PER"
+    )
 
 
 def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
@@ -74,7 +97,7 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
             ).scalar_one()
-            == "0011_market_data_access_indexes"
+            == "0012_valuation_data_foundation"
         )
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
         assert (
@@ -84,6 +107,19 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             ).scalar_one()
             == "data_anomaly_lifecycle_events"
         )
+        valuation_tables = {
+            row[0]
+            for row in connection.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name IN ('valuation_metrics','historical_valuation_metrics',"
+                "'valuation_snapshot_inputs')"
+            )
+        }
+        assert valuation_tables == {
+            "valuation_metrics",
+            "historical_valuation_metrics",
+            "valuation_snapshot_inputs",
+        }
         version_column = next(
             row
             for row in connection.exec_driver_sql("PRAGMA table_info(data_anomalies)")

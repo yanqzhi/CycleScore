@@ -6,8 +6,12 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from cyclescope.domain.services.valuation import default_metric_definitions
 from cyclescope.infrastructure.config import get_settings
-from cyclescope.infrastructure.database.models import IndustryModel
+from cyclescope.infrastructure.database.models import (
+    IndustryModel,
+    ValuationMetricModel,
+)
 from cyclescope.infrastructure.database.session import (
     create_database_engine,
     create_session_factory,
@@ -36,6 +40,28 @@ def seed_industries(session: Session) -> None:
     )
 
 
+def seed_valuation_metrics(session: Session) -> None:
+    """Insert missing initial definitions without overwriting local changes."""
+    existing = set(session.scalars(select(ValuationMetricModel.metric_code)).all())
+    for definition in default_metric_definitions():
+        if definition.metric_code.value in existing:
+            continue
+        session.add(
+            ValuationMetricModel(
+                metric_code=definition.metric_code.value,
+                metric_name=definition.metric_name,
+                description=definition.description,
+                unit=definition.unit.value,
+                currency_applicability=definition.currency_applicability.value,
+                required_inputs=list(definition.required_inputs),
+                calculation_method=definition.calculation_method,
+                calculation_version=definition.calculation_version,
+                validity_rules=list(definition.validity_rules),
+                is_active=definition.is_active,
+            )
+        )
+
+
 def main() -> None:
     """Run Alembic migrations and seed industries without deleting data."""
     from alembic import command
@@ -52,7 +78,10 @@ def main() -> None:
     factory = create_session_factory(create_database_engine(settings.database_url))
     with factory.begin() as session:
         seed_industries(session)
-    logger.info("Database schema is current and industry seed data is present.")
+        seed_valuation_metrics(session)
+    logger.info(
+        "Database schema is current and initial industry/valuation masters are present."
+    )
 
 
 if __name__ == "__main__":
