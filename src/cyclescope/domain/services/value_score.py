@@ -220,6 +220,7 @@ def score_peer_relative(
     references: tuple[ValueScoreInputReference, ...],
     expected_submetrics: int = 3,
     unavailable_reasons: tuple[tuple[str, str], ...] = (),
+    excluded_peer_reasons: tuple[tuple[int, str], ...] = (),
 ) -> ValueScoreComponent:
     """Compare each company multiple with a deterministic peer median.
 
@@ -263,6 +264,8 @@ def score_peer_relative(
             measures=tuple(measures),
             references=references,
             peers=peer_security_ids,
+            exclusion_reasons=tuple(reason for _, reason in excluded_peer_reasons),
+            excluded_peer_reasons=excluded_peer_reasons,
         )
     coverage = Decimal(len(scores)) / Decimal(expected_submetrics)
     return ValueScoreComponent(
@@ -280,6 +283,8 @@ def score_peer_relative(
         input_references=references,
         peer_security_ids=peer_security_ids,
         coverage=coverage,
+        exclusion_reasons=tuple(reason for _, reason in excluded_peer_reasons),
+        excluded_peer_reasons=excluded_peer_reasons,
     )
 
 
@@ -293,9 +298,13 @@ def finalize_value_score(
 ) -> ValueScore:
     """Redistribute weights only after the configured coverage minimum is met."""
     weights = config.weight_map
+    if any(component.coverage is None for component in components):
+        raise DomainValidationError(
+            "Cannot aggregate a component with unknown legacy coverage."
+        )
     covered_weight = sum(
         (
-            weights[component.code] * (component.coverage or Decimal(0))
+            weights[component.code] * _known_coverage(component)
             for component in components
         ),
         Decimal(0),
@@ -311,13 +320,12 @@ def finalize_value_score(
             peer_security_ids=component.peer_security_ids,
             original_weight=weights[component.code],
             effective_weight=(
-                weights[component.code]
-                * (component.coverage or Decimal(0))
-                / covered_weight
+                weights[component.code] * _known_coverage(component) / covered_weight
                 if component.score is not None and covered_weight > 0
                 else Decimal(0)
             ),
             exclusion_reasons=component.exclusion_reasons,
+            excluded_peer_reasons=component.excluded_peer_reasons,
             coverage=component.coverage,
         )
         for component in components
@@ -343,6 +351,7 @@ def finalize_value_score(
                 original_weight=item.original_weight,
                 effective_weight=Decimal(0),
                 exclusion_reasons=item.exclusion_reasons,
+                excluded_peer_reasons=item.excluded_peer_reasons,
                 coverage=item.coverage,
             )
             for item in finalized
@@ -406,6 +415,12 @@ def _mean(values: list[Decimal]) -> Decimal:
         )
 
 
+def _known_coverage(component: ValueScoreComponent) -> Decimal:
+    if component.coverage is None:
+        raise DomainValidationError("Component coverage is unknown.")
+    return component.coverage
+
+
 def _unavailable(
     code: ValueScoreComponentCode,
     reason: str,
@@ -414,6 +429,7 @@ def _unavailable(
     references: tuple[ValueScoreInputReference, ...] = (),
     peers: tuple[int, ...] = (),
     exclusion_reasons: tuple[str, ...] = (),
+    excluded_peer_reasons: tuple[tuple[int, str], ...] = (),
 ) -> ValueScoreComponent:
     return ValueScoreComponent(
         code=code,
@@ -424,6 +440,7 @@ def _unavailable(
         input_references=references,
         peer_security_ids=peers,
         exclusion_reasons=exclusion_reasons,
+        excluded_peer_reasons=excluded_peer_reasons,
         coverage=Decimal(0),
     )
 

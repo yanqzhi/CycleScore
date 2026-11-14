@@ -3,6 +3,12 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 from cyclescope.application.dto.value_score import CalculateValueScoreRequest
+from cyclescope.application.use_cases.financial_data import GetFinancialStatements
+from cyclescope.application.use_cases.market_data_access import MarketDataAccess
+from cyclescope.application.use_cases.valuation_inputs import BuildValuationInputs
+from cyclescope.application.use_cases.valuation_percentile import (
+    CalculateHistoricalValuationPercentile,
+)
 from cyclescope.application.use_cases.value_score import CalculateValueScore
 from cyclescope.domain.entities.valuation import (
     ValuationInputs,
@@ -15,7 +21,7 @@ from cyclescope.domain.entities.valuation_percentile import (
     PercentileMetric,
     ValuationLookbackPeriod,
 )
-from cyclescope.domain.exceptions import DataUnavailable, DomainValidationError
+from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.domain.services.valuation import default_metric_definitions
 from cyclescope.infrastructure.database.models import (
     CompanyIndustryExposureModel,
@@ -25,16 +31,29 @@ from cyclescope.infrastructure.database.models import (
     SecurityModel,
     SubIndustryModel,
 )
+from cyclescope.infrastructure.database.repositories.financial_data import (
+    SQLAlchemyFinancialItemRepository,
+    SQLAlchemyFinancialStatementItemRepository,
+    SQLAlchemyFinancialStatementRepository,
+)
 from cyclescope.infrastructure.database.repositories.market_data import (
     SQLAlchemyDailyPriceRepository,
+    SQLAlchemyFxRateRepository,
 )
 from cyclescope.infrastructure.database.repositories.master_data import (
     CompanyIndustryExposureSqlAlchemyRepository,
+    ListingSqlAlchemyRepository,
     SecuritySqlAlchemyRepository,
+)
+from cyclescope.infrastructure.database.repositories.normalized_earnings import (
+    SQLAlchemyNormalizedEarningsRepository,
 )
 from cyclescope.infrastructure.database.repositories.valuation import (
     SQLAlchemyValuationMetricRepository,
     SQLAlchemyValuationMetricValueRepository,
+)
+from cyclescope.infrastructure.database.repositories.valuation_percentile import (
+    SQLAlchemyValuationPercentileRepository,
 )
 from cyclescope.infrastructure.database.repositories.value_score import (
     SQLAlchemyValueScoreRepository,
@@ -84,6 +103,11 @@ class _PercentileUseCase:
             observations=(),
         )
         return SimpleNamespace(result=result)
+
+
+class _TradingCalendar:
+    def expected_sessions(self, calendar_id, start_date, end_date):
+        return (end_date,)
 
 
 class _InputBuilder:
@@ -157,9 +181,7 @@ def test_expected_data_unavailability_becomes_partial_component() -> None:
         exposures=_ExposureRepo(),
         results=results,
         percentile_calculator=_PercentileUseCase(),
-        valuation_input_builder=_InputBuilder(
-            DataUnavailable("No financial statement is available.")
-        ),
+        valuation_input_builder=_InputBuilder(),
     )
     result = use_case.execute(
         CalculateValueScoreRequest(
@@ -170,6 +192,63 @@ def test_expected_data_unavailability_becomes_partial_component() -> None:
     ).score
     assert result.components[4].status.value == "UNAVAILABLE"
     assert results.created is result
+
+
+def test_real_services_represent_missing_financial_and_market_data_as_unavailable(
+    session,
+) -> None:
+    company = CompanyModel(name="No Data Co", country_code="JP")
+    session.add(company)
+    session.flush()
+    security_model = SecurityModel(company_id=company.id, security_type="COMMON")
+    session.add(security_model)
+    session.flush()
+
+    securities = SecuritySqlAlchemyRepository(session)
+    prices = SQLAlchemyDailyPriceRepository(session)
+    statements = SQLAlchemyFinancialStatementRepository(session)
+    statement_items = SQLAlchemyFinancialStatementItemRepository(session)
+    financial_items = SQLAlchemyFinancialItemRepository(session)
+    financial_query = GetFinancialStatements(statements, statement_items)
+    market_access = MarketDataAccess(prices, SQLAlchemyFxRateRepository(session))
+    input_builder = BuildValuationInputs(
+        securities, financial_items, financial_query, market_access
+    )
+    metric_values = SQLAlchemyValuationMetricValueRepository(session)
+    percentile_calculator = CalculateHistoricalValuationPercentile(
+        securities=securities,
+        listings=ListingSqlAlchemyRepository(session),
+        valuation_values=metric_values,
+        normalized_earnings=SQLAlchemyNormalizedEarningsRepository(session),
+        results=SQLAlchemyValuationPercentileRepository(session),
+        calendar=_TradingCalendar(),
+        valuation_input_builder=input_builder,
+        normalized_calculator=object(),
+    )
+    use_case = CalculateValueScore(
+        securities=securities,
+        prices=prices,
+        values=metric_values,
+        exposures=CompanyIndustryExposureSqlAlchemyRepository(session),
+        results=SQLAlchemyValueScoreRepository(session),
+        percentile_calculator=percentile_calculator,
+        valuation_input_builder=input_builder,
+    )
+    result = use_case.execute(
+        CalculateValueScoreRequest(
+            security_id=security_model.id,
+            as_of=AS_OF,
+            calendar_id="TSE",
+        )
+    ).score
+    assert result.components[1].status.value == "UNAVAILABLE"
+    assert result.components[2].status.value == "UNAVAILABLE"
+    assert result.components[4].status.value == "UNAVAILABLE"
+    assert result.score is None
+    assert (
+        len(SQLAlchemyValueScoreRepository(session).list_by_security(security_model.id))
+        == 1
+    )
 
 
 def test_currency_mismatch_propagates_without_snapshot() -> None:
@@ -362,6 +441,22 @@ def test_relative_valuation_uses_only_pit_source_and_period_comparable_peers(
             999,
             as_of=datetime(2026, 2, 2, tzinfo=UTC),
         )
+        # A second full source cohort is used to verify deterministic tie-breaking.
+        save_value(
+            securities[0].id,
+            metric,
+            100 + metric_index,
+            financial_source=2,
+            price_source=market_source_other.id,
+        )
+        for peer_index, peer_value in enumerate((200, 300, 400), start=1):
+            save_value(
+                securities[peer_index].id,
+                metric,
+                peer_value + metric_index,
+                financial_source=2,
+                price_source=market_source_other.id,
+            )
 
     exposures = CompanyIndustryExposureSqlAlchemyRepository(session)
     target = securities[0]
@@ -400,6 +495,30 @@ def test_relative_valuation_uses_only_pit_source_and_period_comparable_peers(
     assert next(m for m in relative.measures if m.code == "PER").value == Decimal("0.5")
     assert all(ref.available_at <= AS_OF for ref in relative.input_references)
 
+    with_incompatible_extra = run_score((*peers, securities[10].id)).components[5]
+    assert with_incompatible_extra.status.value == "AVAILABLE"
+    assert securities[10].id in {
+        peer_id for peer_id, _ in with_incompatible_extra.excluded_peer_reasons
+    }
+
+    deterministic = calculator.execute(
+        CalculateValueScoreRequest(
+            security_id=target.id,
+            as_of=AS_OF,
+            calendar_id="TSE",
+            peer_security_ids=peers,
+        )
+    ).score.components[5]
+    assert next(m for m in deterministic.measures if m.code == "PER").value == Decimal(
+        "0.5"
+    )
+    assert {
+        reference.financial_source_ids for reference in deterministic.input_references
+    } == {(1,)}
+    assert {reference.source_id for reference in deterministic.input_references} == {
+        market_source.id
+    }
+
     bad_peer_indexes = (5, 6, 7, 8, 9, 10)
     for index in bad_peer_indexes:
         result = run_score((securities[1].id, securities[2].id, securities[index].id))
@@ -409,5 +528,8 @@ def test_relative_valuation_uses_only_pit_source_and_period_comparable_peers(
 
     # Real SQLite score repository persists the source-filtered peer audit.
     persisted = SQLAlchemyValueScoreRepository(session).list_by_security(target.id)
-    assert len(persisted) == 1 + len(bad_peer_indexes) + 1
+    assert len(persisted) == 3 + len(bad_peer_indexes) + 1
     assert persisted[0].components[5].peer_security_ids == relative.peer_security_ids
+    assert securities[10].id in {
+        peer_id for peer_id, _ in persisted[1].components[5].excluded_peer_reasons
+    }

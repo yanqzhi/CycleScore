@@ -23,6 +23,7 @@ from cyclescope.domain.entities.company_industry_exposure import (
 from cyclescope.domain.entities.valuation import (
     ValuationInputReference,
     ValuationMetricCode,
+    ValuationMetricValue,
 )
 from cyclescope.domain.entities.valuation_percentile import PercentileMetric
 from cyclescope.domain.entities.value_score import (
@@ -32,7 +33,7 @@ from cyclescope.domain.entities.value_score import (
     ValueScoreInputReference,
     ValueScoreMeasure,
 )
-from cyclescope.domain.exceptions import DataUnavailable, DomainValidationError
+from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.domain.repositories.contracts import (
     CompanyIndustryExposureRepository,
     DailyPriceRepository,
@@ -96,46 +97,43 @@ class CalculateValueScore:
         valuation_refs: list[ValueScoreInputReference] = []
         valuation_exclusions: list[str] = []
         for metric in (PercentileMetric.PER, PercentileMetric.PBR):
-            try:
-                result = self._percentiles.execute(
-                    self._percentile_request(request, metric)
-                ).result
-                valuation_rows.append(
-                    (metric.value, result.percentile, result.status_reason)
+            result = self._percentiles.execute(
+                self._percentile_request(request, metric)
+            ).result
+            valuation_rows.append(
+                (metric.value, result.percentile, result.status_reason)
+            )
+            if result.id:
+                valuation_refs.append(
+                    ValueScoreInputReference(
+                        "VALUATION_PERCENTILE",
+                        result.id,
+                        result.as_of,
+                        security_id=security.id,
+                        reference_code=metric.value,
+                    ),
                 )
-                if result.id:
-                    valuation_refs.append(
-                        ValueScoreInputReference(
-                            "VALUATION_PERCENTILE",
-                            result.id,
-                            result.as_of,
-                            security_id=security.id,
-                            reference_code=metric.value,
-                        ),
-                    )
-                for row in result.observations:
-                    if row.included:
-                        record_id = row.snapshot_id
-                        if record_id:
-                            valuation_refs.append(
-                                ValueScoreInputReference(
-                                    "VALUATION_SNAPSHOT",
-                                    record_id,
-                                    result.as_of,
-                                    source_id=row.market_source_id,
-                                    observation_date=row.observation_date,
-                                    security_id=security.id,
-                                    reference_code=metric.value,
-                                )
+            for row in result.observations:
+                if row.included:
+                    record_id = row.snapshot_id
+                    if record_id:
+                        valuation_refs.append(
+                            ValueScoreInputReference(
+                                "VALUATION_SNAPSHOT",
+                                record_id,
+                                result.as_of,
+                                source_id=row.market_source_id,
+                                observation_date=row.observation_date,
+                                security_id=security.id,
+                                reference_code=metric.value,
                             )
-                        valuation_refs.extend(
-                            _input_reference(reference, metric.value)
-                            for reference in row.references
                         )
-                    elif row.reason:
-                        valuation_exclusions.append(row.reason)
-            except DataUnavailable as exc:
-                valuation_rows.append((metric.value, None, str(exc)))
+                    valuation_refs.extend(
+                        _input_reference(reference, metric.value)
+                        for reference in row.references
+                    )
+                elif row.reason:
+                    valuation_exclusions.append(row.reason)
         historical_component = score_percentile_family(
             ValueScoreComponentCode.HISTORICAL_VALUATION,
             tuple(valuation_rows),
@@ -150,48 +148,43 @@ class CalculateValueScore:
             PercentileMetric.NORMALIZED_PER,
             PercentileMetric.NORMALIZED_EV_EBITDA,
         ):
-            try:
-                result = self._percentiles.execute(
-                    self._percentile_request(request, metric)
-                ).result
-                normalized_rows.append(
-                    (metric.value, result.percentile, result.status_reason)
-                )
-                if result.id:
-                    normalized_refs.append(
-                        ValueScoreInputReference(
-                            "VALUATION_PERCENTILE",
-                            result.id,
-                            result.as_of,
-                            security_id=security.id,
-                            reference_code=metric.value,
-                        )
+            result = self._percentiles.execute(
+                self._percentile_request(request, metric)
+            ).result
+            normalized_rows.append(
+                (metric.value, result.percentile, result.status_reason)
+            )
+            if result.id:
+                normalized_refs.append(
+                    ValueScoreInputReference(
+                        "VALUATION_PERCENTILE",
+                        result.id,
+                        result.as_of,
+                        security_id=security.id,
+                        reference_code=metric.value,
                     )
-                for row in result.observations:
-                    if row.included:
-                        record_id = row.normalized_earnings_result_id or row.snapshot_id
-                        if record_id and row.normalized_earnings_result_id:
-                            normalized_refs.append(
-                                ValueScoreInputReference(
-                                    "NORMALIZED_EARNINGS"
-                                    if row.normalized_earnings_result_id
-                                    else "VALUATION_SNAPSHOT",
-                                    record_id,
-                                    result.as_of,
-                                    source_id=row.market_source_id,
-                                    observation_date=row.observation_date,
-                                    security_id=security.id,
-                                    reference_code=metric.value,
-                                )
+                )
+            for row in result.observations:
+                if row.included:
+                    record_id = row.normalized_earnings_result_id or row.snapshot_id
+                    if record_id and row.normalized_earnings_result_id:
+                        normalized_refs.append(
+                            ValueScoreInputReference(
+                                "NORMALIZED_EARNINGS",
+                                record_id,
+                                result.as_of,
+                                source_id=row.market_source_id,
+                                observation_date=row.observation_date,
+                                security_id=security.id,
+                                reference_code=metric.value,
                             )
-                        normalized_refs.extend(
-                            _input_reference(reference, metric.value)
-                            for reference in row.references
                         )
-                    elif row.reason:
-                        normalized_exclusions.append(row.reason)
-            except DataUnavailable as exc:
-                normalized_rows.append((metric.value, None, str(exc)))
+                    normalized_refs.extend(
+                        _input_reference(reference, metric.value)
+                        for reference in row.references
+                    )
+                elif row.reason:
+                    normalized_exclusions.append(row.reason)
         normalized_component = score_percentile_family(
             ValueScoreComponentCode.NORMALIZED_EARNINGS_VALUATION,
             tuple(normalized_rows),
@@ -199,40 +192,35 @@ class CalculateValueScore:
             tuple(normalized_exclusions),
         )
 
-        try:
-            inputs = self._input_builder.execute(
-                ValuationInputRequest(
-                    security_id=request.security_id,
-                    valuation_date=as_of.date(),
-                    as_of=as_of,
-                    financial_source_id=request.financial_source_id,
-                    market_source_id=request.market_source_id,
-                )
+        inputs = self._input_builder.execute(
+            ValuationInputRequest(
+                security_id=request.security_id,
+                valuation_date=as_of.date(),
+                as_of=as_of,
+                financial_source_id=request.financial_source_id,
+                market_source_id=request.market_source_id,
             )
-            balance_refs = tuple(
-                ValueScoreInputReference(
-                    reference.record_type,
-                    reference.record_id,
-                    reference.available_at,
-                    source_id=reference.source_id,
-                    revision_number=reference.revision_number,
-                    observation_date=reference.observation_date,
-                    security_id=request.security_id,
-                    reference_code=reference.financial_item_code,
-                )
-                for reference in inputs.input_references
+        )
+        balance_refs = tuple(
+            ValueScoreInputReference(
+                reference.record_type,
+                reference.record_id,
+                reference.available_at,
+                source_id=reference.source_id,
+                revision_number=reference.revision_number,
+                observation_date=reference.observation_date,
+                security_id=request.security_id,
+                reference_code=reference.financial_item_code,
             )
-            balance_component = score_debt_to_equity(
-                short_term_debt=inputs.short_term_debt,
-                long_term_debt=inputs.long_term_debt,
-                total_equity=inputs.total_equity,
-                maximum_ratio=request.config.maximum_debt_to_equity,
-                references=balance_refs,
-            )
-        except DataUnavailable as exc:
-            balance_component = _unavailable(
-                ValueScoreComponentCode.BALANCE_SHEET, str(exc)
-            )
+            for reference in inputs.input_references
+        )
+        balance_component = score_debt_to_equity(
+            short_term_debt=inputs.short_term_debt,
+            long_term_debt=inputs.long_term_debt,
+            total_equity=inputs.total_equity,
+            maximum_ratio=request.config.maximum_debt_to_equity,
+            references=balance_refs,
+        )
 
         cash_component = _unavailable(
             ValueScoreComponentCode.CASH_FLOW_VALUATION,
@@ -281,27 +269,40 @@ class CalculateValueScore:
     ) -> ValueScoreComponent:
         cutoff = as_of.date()
         target = _active_exposures(self._exposures.list_by_company(company_id), cutoff)
-        if not target or not request.peer_security_ids:
+        if not target:
             return _unavailable(
                 ValueScoreComponentCode.RELATIVE_VALUATION,
-                "Explicit peers and active compatible industry exposures are required.",
+                "The target has no active sub-industry exposure.",
+                excluded_peer_reasons=tuple(
+                    (
+                        peer_id,
+                        "Target industry exposure is unavailable for compatibility "
+                        "checks.",
+                    )
+                    for peer_id in request.peer_security_ids
+                ),
             )
-        compatible = []
+        if not request.peer_security_ids:
+            return _unavailable(
+                ValueScoreComponentCode.RELATIVE_VALUATION,
+                "Explicit peer IDs are required.",
+            )
+        compatible: list[int] = []
+        excluded_peer_reasons: dict[int, str] = {}
         for peer_id in request.peer_security_ids:
             peer = self._securities.get_by_id(peer_id)
             if peer is None:
+                excluded_peer_reasons[peer_id] = "Unknown security."
                 continue
             peer_exposures = _active_exposures(
                 self._exposures.list_by_company(peer.company_id), cutoff
             )
             if set(target) & set(peer_exposures):
                 compatible.append(peer_id)
-        if len(compatible) < request.config.minimum_peer_count:
-            return _unavailable(
-                ValueScoreComponentCode.RELATIVE_VALUATION,
-                f"Only {len(compatible)} explicit peers share an active "
-                f"sub-industry; {request.config.minimum_peer_count} required.",
-            )
+            else:
+                excluded_peer_reasons[peer_id] = (
+                    "No active sub-industry exposure is shared with the target."
+                )
         metric_map = (
             (ValuationMetricCode.PER, "PER"),
             (ValuationMetricCode.PBR, "PBR"),
@@ -312,7 +313,7 @@ class CalculateValueScore:
         selected_peers: list[int] = []
         unavailable_reasons: list[tuple[str, str]] = []
         for metric, code in metric_map:
-            rows_by_security = {}
+            rows_by_security: dict[int, list[ValuationMetricValue]] = {}
             for peer_id in (request.security_id, *compatible):
                 rows = self._values.list_by_security(
                     peer_id, metric, start_date=cutoff, end_date=cutoff, as_of=as_of
@@ -338,59 +339,88 @@ class CalculateValueScore:
                     ]
                 if rows:
                     rows_by_security[peer_id] = rows
-            signatures = [
-                {
-                    (row.financial_source_ids, row.price_source_id)
+            signature_rows = {
+                peer_id: [
+                    row
                     for row in rows
-                    if row.financial_source_ids
-                    and len(row.financial_source_ids) == 1
+                    if len(row.financial_source_ids) == 1
                     and row.price_source_id is not None
-                }
-                for rows in rows_by_security.values()
-            ]
-            common_signatures = set.intersection(*signatures) if signatures else set()
-            if len(common_signatures) != 1:
-                continue
-            signature = next(iter(common_signatures))
-            cohort = [
-                max(
-                    [
+                ]
+                for peer_id, rows in rows_by_security.items()
+            }
+            target_rows = signature_rows.get(request.security_id, [])
+            latest_target_rows: dict[
+                tuple[tuple[int, ...], int | None, str | None, str | None, int],
+                ValuationMetricValue,
+            ] = {}
+            for row in target_rows:
+                target_key = (
+                    row.financial_source_ids,
+                    row.price_source_id,
+                    row.currency,
+                    row.financial_period,
+                    row.calculation_version,
+                )
+                previous = latest_target_rows.get(target_key)
+                if previous is None or (row.as_of, row.id or 0) > (
+                    previous.as_of,
+                    previous.id or 0,
+                ):
+                    latest_target_rows[target_key] = row
+            target_rows = list(latest_target_rows.values())
+            candidate_cohorts = []
+            for target_row in target_rows:
+                signature = (
+                    target_row.financial_source_ids,
+                    target_row.price_source_id,
+                )
+                matching_by_peer = {}
+                for peer_id in compatible:
+                    matching = [
                         row
-                        for row in rows
+                        for row in signature_rows.get(peer_id, [])
                         if (row.financial_source_ids, row.price_source_id) == signature
-                    ],
-                    key=lambda row: (row.as_of, row.id or 0),
+                        and row.currency == target_row.currency
+                        and row.financial_period == target_row.financial_period
+                        and row.calculation_version == target_row.calculation_version
+                    ]
+                    if matching:
+                        matching_by_peer[peer_id] = max(
+                            matching, key=lambda row: (row.as_of, row.id or 0)
+                        )
+                candidate_cohorts.append((target_row, signature, matching_by_peer))
+            # A source cohort is ranked by its eligible peer count. Ties use
+            # ascending source IDs and then comparable metric metadata.
+            eligible_cohorts = [
+                candidate
+                for candidate in candidate_cohorts
+                if len(candidate[2]) >= request.config.minimum_peer_count
+            ]
+            if eligible_cohorts:
+                target_row, signature, peers_by_id = min(
+                    eligible_cohorts,
+                    key=lambda candidate: (
+                        -len(candidate[2]),
+                        candidate[1][0],
+                        candidate[1][1],
+                        candidate[0].currency or "",
+                        candidate[0].financial_period or "",
+                        candidate[0].calculation_version,
+                        candidate[0].as_of,
+                        candidate[0].id or 0,
+                    ),
                 )
-                for rows in rows_by_security.values()
-                if any(
-                    (row.financial_source_ids, row.price_source_id) == signature
-                    for row in rows
+                comparable = tuple(
+                    peers_by_id[peer_id] for peer_id in sorted(peers_by_id)
                 )
-            ]
-            company_rows = [
-                row for row in cohort if row.security_id == request.security_id
-            ]
-            peer_rows = [
-                row for row in cohort if row.security_id != request.security_id
-            ]
-            comparable = [
-                row
-                for row in peer_rows
-                if company_rows
-                and row.currency == company_rows[0].currency
-                and row.financial_period == company_rows[0].financial_period
-                and row.calculation_version == company_rows[0].calculation_version
-            ]
-            if company_rows and len(comparable) >= request.config.minimum_peer_count:
                 peer_median = _decimal_median(
                     [row.value for row in comparable if row.value is not None]
                 )
-                company_value = company_rows[0].value
+                company_value = target_row.value
                 if company_value is not None:
                     values.append((code, company_value, peer_median))
-                    for row in (company_rows[0], *comparable):
-                        if row.security_id != request.security_id:
-                            selected_peers.append(row.security_id)
+                    selected_peers.extend(peers_by_id)
+                    for row in (target_row, *comparable):
                         if row.id:
                             references.append(
                                 ValueScoreInputReference(
@@ -402,7 +432,15 @@ class CalculateValueScore:
                                     observation_date=row.observation_date,
                                     security_id=row.security_id,
                                     reference_code=code,
+                                    financial_source_ids=row.financial_source_ids,
                                 )
+                            )
+                    for peer_id in compatible:
+                        if peer_id not in peers_by_id:
+                            excluded_peer_reasons[peer_id] = (
+                                f"Excluded from selected {code} cohort: no eligible "
+                                "matching source, currency, period, or calculation "
+                                "version."
                             )
             else:
                 unavailable_reasons.append(
@@ -412,12 +450,21 @@ class CalculateValueScore:
                         "peer sample met the configured minimum.",
                     )
                 )
+                # Record candidate source-specific counts for every peer. No
+                # source set is merged when no cohort reaches the minimum.
+                for peer_id in compatible:
+                    excluded_peer_reasons.setdefault(
+                        peer_id,
+                        f"Excluded from {code}: no eligible comparable source cohort "
+                        f"reached {request.config.minimum_peer_count} peers.",
+                    )
         return score_peer_relative(
             tuple(values),
             peer_security_ids=tuple(sorted(set(selected_peers))),
             references=tuple(references),
             expected_submetrics=len(metric_map),
             unavailable_reasons=tuple(unavailable_reasons),
+            excluded_peer_reasons=tuple(sorted(excluded_peer_reasons.items())),
         )
 
 
@@ -427,6 +474,7 @@ def _active_exposures(rows: list[CompanyIndustryExposure], cutoff: date) -> set[
         for row in rows
         if (row.valid_from is None or row.valid_from <= cutoff)
         and (row.valid_to is None or row.valid_to >= cutoff)
+        and row.revenue_share > 0
     }
 
 
@@ -454,11 +502,17 @@ def _decimal_median(values: list[Decimal]) -> Decimal:
         return (ordered[middle - 1] + ordered[middle]) / Decimal(2)
 
 
-def _unavailable(code: ValueScoreComponentCode, reason: str) -> ValueScoreComponent:
+def _unavailable(
+    code: ValueScoreComponentCode,
+    reason: str,
+    *,
+    excluded_peer_reasons: tuple[tuple[int, str], ...] = (),
+) -> ValueScoreComponent:
     return ValueScoreComponent(
         code,
         ValueScoreComponentStatus.UNAVAILABLE,
         None,
         reason,
         measures=(ValueScoreMeasure(code.value, None, "N/A", None, reason),),
+        excluded_peer_reasons=excluded_peer_reasons,
     )

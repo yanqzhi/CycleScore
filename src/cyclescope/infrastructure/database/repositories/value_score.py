@@ -31,6 +31,7 @@ def _ref_dict(ref: ValueScoreInputReference) -> dict[str, object]:
         "record_id": ref.record_id,
         "available_at": ref.available_at.isoformat(),
         "source_id": ref.source_id,
+        "financial_source_ids": list(ref.financial_source_ids),
         "revision_number": ref.revision_number,
         "observation_date": ref.observation_date.isoformat()
         if ref.observation_date
@@ -49,7 +50,10 @@ def _component_dict(component: ValueScoreComponent) -> dict[str, object]:
         "original_weight": str(component.original_weight),
         "effective_weight": str(component.effective_weight),
         "exclusion_reasons": list(component.exclusion_reasons),
-        "coverage": str(component.coverage),
+        "excluded_peer_reasons": [
+            [peer_id, reason] for peer_id, reason in component.excluded_peer_reasons
+        ],
+        "coverage": str(component.coverage) if component.coverage is not None else None,
         "peer_security_ids": list(component.peer_security_ids),
         "measures": [
             {
@@ -70,7 +74,8 @@ def _domain(row: ValueScoreModel) -> ValueScore:
     component_data = cast(list[dict[str, Any]], row.components)
     for item in component_data:
         measure_data = cast(list[dict[str, Any]], item["measures"])
-        if "coverage" in item:
+        component_coverage: Decimal | None
+        if "coverage" in item and item["coverage"] is not None:
             component_coverage = Decimal(item["coverage"])
         elif item["status"] == ValueScoreComponentStatus.AVAILABLE.value:
             component_coverage = Decimal(1)
@@ -85,7 +90,7 @@ def _domain(row: ValueScoreModel) -> ValueScore:
             component_coverage = (
                 Decimal(usable_count) / Decimal(measure_count)
                 if measure_count and usable_count
-                else Decimal("0.5")
+                else None
             )
         refs = tuple(
             ValueScoreInputReference(
@@ -93,6 +98,7 @@ def _domain(row: ValueScoreModel) -> ValueScore:
                 record_id=int(ref["record_id"]),
                 available_at=_utc(datetime.fromisoformat(ref["available_at"])),
                 source_id=ref["source_id"],
+                financial_source_ids=tuple(ref.get("financial_source_ids", ())),
                 revision_number=ref["revision_number"],
                 observation_date=datetime.fromisoformat(ref["observation_date"]).date()
                 if ref["observation_date"]
@@ -128,6 +134,10 @@ def _domain(row: ValueScoreModel) -> ValueScore:
                 original_weight=Decimal(item["original_weight"]),
                 effective_weight=Decimal(item["effective_weight"]),
                 exclusion_reasons=tuple(item.get("exclusion_reasons", ())),
+                excluded_peer_reasons=tuple(
+                    (int(peer_id), str(reason))
+                    for peer_id, reason in item.get("excluded_peer_reasons", ())
+                ),
                 coverage=component_coverage,
             )
         )

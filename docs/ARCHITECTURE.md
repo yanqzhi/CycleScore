@@ -56,7 +56,9 @@ Domain has no SQLAlchemy dependencies. Infrastructure persists immutable score
 snapshots through a create/read repository. See [VALUE_SCORE_SPEC.md](VALUE_SCORE_SPEC.md)
 for component formulas, provenance, and limitations.
 
-Expected missing data is represented by `DataUnavailable` or by absent values
-in a valid result. The Value Score workflow catches only `DataUnavailable`;
-`DomainValidationError` and source/PIT integrity failures propagate to the
-caller before persistence.
+Expected missing data uses nullable values and explicit unavailable or
+insufficient-data statuses from the existing valuation and percentile services.
+The Value Score workflow does not convert `DomainValidationError` into a partial
+result; source/PIT integrity failures propagate before persistence. See
+`VALUE_SCORE_SPEC.md` for the deterministic peer-source cohort policy and
+legacy coverage behavior.

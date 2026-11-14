@@ -70,12 +70,29 @@ coverage is 100%; lower usable coverage is `PARTIAL`. Confidence boundaries
 apply to overall data coverage and are stored separately from the numerical
 score.
 
-`DataUnavailable` represents an expected absence of otherwise valid data.
-Only that exception may be translated into an unavailable component. Domain
+Expected missing data is represented by nullable inputs and explicit statuses:
+`BuildValuationInputs` returns missing financial/price values as `None`, while
+valuation and percentile services return `UNAVAILABLE` or `INSUFFICIENT_DATA`
+results with no numeric value. The Value Score workflow consumes those normal
+results directly; it does not use a separate missing-data exception. Domain
 validation failures, including source ambiguity, mixed standards/scopes,
 currency or unit conflicts, invalid inputs, and PIT violations, propagate and
 abort the calculation. The score snapshot is appended only after all components
 have completed, and the caller retains transaction ownership.
+
+For legacy snapshots, component coverage is recovered from stored submetrics
+when available. A legacy `PARTIAL` component with no measurable submetric
+coverage is returned with `coverage = null` (unknown); its stored score, overall
+coverage, and weights are left intact. Unknown legacy coverage cannot be used
+to recalculate a new aggregate until the caller supplies new inputs.
+
+Peer observations are grouped by exact singleton financial-source and
+market-source signature. Cohorts must also match currency, financial period,
+and calculation version. The selected cohort is the one with the most eligible
+peers; ties are broken by ascending financial source ID, market source ID,
+currency, period, calculation version, cutoff, and snapshot ID. Peers outside
+the selected cohort are excluded and retain a peer ID and reason in the score
+audit. A peer excluded from one metric does not invalidate other eligible peers.
 
 ## Persistence and limitations
 

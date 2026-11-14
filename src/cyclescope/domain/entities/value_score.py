@@ -130,6 +130,7 @@ class ValueScoreInputReference:
     observation_date: date | None = None
     security_id: int | None = None
     reference_code: str | None = None
+    financial_source_ids: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.record_type.strip() or self.record_id < 1:
@@ -140,6 +141,10 @@ class ValueScoreInputReference:
             raise DomainValidationError("Reference revision must be positive.")
         if self.security_id is not None and self.security_id < 1:
             raise DomainValidationError("Reference security_id must be positive.")
+        if any(source_id < 1 for source_id in self.financial_source_ids):
+            raise DomainValidationError(
+                "Reference financial source IDs must be positive."
+            )
         if self.available_at.tzinfo is None or self.available_at.utcoffset() is None:
             raise DomainValidationError(
                 "Reference available_at must be timezone-aware."
@@ -186,6 +191,7 @@ class ValueScoreComponent:
     original_weight: Decimal = Decimal(0)
     effective_weight: Decimal = Decimal(0)
     exclusion_reasons: tuple[str, ...] = ()
+    excluded_peer_reasons: tuple[tuple[int, str], ...] = ()
     coverage: Decimal | None = None
 
     def __post_init__(self) -> None:
@@ -198,16 +204,18 @@ class ValueScoreComponent:
         coverage = self.coverage
         if coverage is None:
             if self.status == ValueScoreComponentStatus.PARTIAL:
-                raise DomainValidationError(
-                    "Partial components must declare submetric coverage."
+                # Legacy snapshots may not contain enough measures to recover it.
+                pass
+            else:
+                coverage = (
+                    Decimal(1)
+                    if self.status == ValueScoreComponentStatus.AVAILABLE
+                    else Decimal(0)
                 )
-            coverage = (
-                Decimal(1)
-                if self.status == ValueScoreComponentStatus.AVAILABLE
-                else Decimal(0)
-            )
-            object.__setattr__(self, "coverage", coverage)
-        if not coverage.is_finite() or not Decimal(0) <= coverage <= Decimal(1):
+                object.__setattr__(self, "coverage", coverage)
+        if coverage is not None and (
+            not coverage.is_finite() or not Decimal(0) <= coverage <= Decimal(1)
+        ):
             raise DomainValidationError("Component coverage must be in [0, 1].")
         if (self.score is None) != (
             self.status
@@ -221,7 +229,11 @@ class ValueScoreComponent:
             raise DomainValidationError("Unavailable components require a reason.")
         if self.status == ValueScoreComponentStatus.AVAILABLE and coverage != 1:
             raise DomainValidationError("Available components require full coverage.")
-        if self.status == ValueScoreComponentStatus.PARTIAL and not 0 < coverage < 1:
+        if (
+            self.status == ValueScoreComponentStatus.PARTIAL
+            and coverage is not None
+            and not 0 < coverage < 1
+        ):
             raise DomainValidationError("Partial components require partial coverage.")
         if (
             self.status
@@ -234,6 +246,11 @@ class ValueScoreComponent:
             raise DomainValidationError("Unavailable components have zero coverage.")
         if any(peer < 1 for peer in self.peer_security_ids):
             raise DomainValidationError("Peer security IDs must be positive.")
+        if any(
+            peer < 1 or not reason.strip()
+            for peer, reason in self.excluded_peer_reasons
+        ):
+            raise DomainValidationError("Excluded peer audit entries are invalid.")
 
 
 @dataclass(frozen=True, slots=True)

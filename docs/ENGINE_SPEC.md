@@ -56,4 +56,5 @@ Each component carries submetric coverage. Overall coverage is the
 component-weighted sum of submetric coverage; a partially covered component's
 score weight is reduced proportionally before available weights are normalized.
 Expected data absence is distinct from validation/integrity failure: only the
-dedicated `DataUnavailable` exception becomes an unavailable component.
+nullable source values and explicit unavailable/insufficient statuses become
+unavailable components; domain and integrity validation errors remain fatal.
