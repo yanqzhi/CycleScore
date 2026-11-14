@@ -27,8 +27,17 @@ engine does not resample to monthly data. For each observation date and metric,
 the latest eligible snapshot is selected deterministically by snapshot cutoff
 and ID. A later same-date snapshot supersedes the earlier one and the superseded
 row is retained in the audit with an exclusion reason. Multiple market sources
-or different financial source sets are not merged: when the series contains
-more than one, the request must select a market source and/or financial source.
+or different financial source sets are not merged. An explicitly selected
+financial source must be the snapshot's complete source set: `(selected_id,)`.
+A snapshot containing the selected source plus another source is excluded with
+an audit reason; it is never treated as selected-source-only. Missing source
+metadata is likewise excluded when a source is selected. Without an explicit
+financial source, every observation must identify exactly one source and all
+observations must use the same source; multi-source combinations and missing
+metadata require an explicit deterministic policy, which Sprint 11 does not
+provide, so the request is rejected. These rules apply to raw and normalized
+valuation metrics. Rejected-source snapshots remain auditable but do not
+supersede a valid snapshot for the selected source on the same date.
 The recorded period bounds describe the earliest and latest source observations
 considered, including rejected rows. The daily sampling choice can overweight
 longer listing histories and periods with more available sessions; no correction
@@ -75,8 +84,11 @@ statuses are handled the same way.
 The current snapshot is compared only with observations sharing its currency,
 unit, financial-period basis, and calculation version. Normalized valuation
 period basis includes its normalization method and requested/effective window.
-Incompatible observations are excluded with a reason. Source selection must be
-consistent. Currency conversion, FY-versus-TTM conversion, and calculation
+Incompatible observations are excluded with a reason. Same-date deduplication
+selects the highest `(snapshot cutoff, snapshot ID)` among eligible snapshots;
+each other eligible snapshot is recorded once as superseded. The selected
+snapshot is recorded once as included or excluded, and the excluded count is
+the number of excluded audit rows. Currency conversion, FY-versus-TTM conversion, and calculation
 version conversion are not attempted. If current inputs are missing or invalid,
 the result has no percentile and carries an explicit status and reason.
 

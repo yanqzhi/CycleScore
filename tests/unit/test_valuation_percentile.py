@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -183,6 +184,126 @@ def test_duplicate_dates_keep_latest_snapshot_and_explain_superseded_row():
     assert any("Superseded" in (row.reason or "") for row in result.observations)
 
 
+@pytest.mark.parametrize("count", [2, 4])
+def test_duplicate_snapshot_audit_selects_latest_once_and_counts_exclusions(count):
+    day = date(2026, 5, 14)
+    snapshots = tuple(
+        observation(
+            day,
+            str(index + 1),
+            snapshot_id=index,
+            as_of=datetime(2026, 5, 14, 8 + index, tzinfo=UTC),
+        )
+        for index in range(1, count + 1)
+    )
+    result = calculate(snapshots[-1], snapshots, (day,))
+    audit_by_id = {row.snapshot_id: row for row in result.observations}
+    assert len(audit_by_id) == count
+    assert result.valid_observations == 1
+    assert result.excluded_observations == count - 1
+    assert audit_by_id[snapshots[-1].snapshot_id].included
+    assert all(not audit_by_id[row.snapshot_id].included for row in snapshots[:-1])
+    assert result.data_quality == "EXCLUSIONS_PRESENT"
+
+
+def test_duplicate_snapshot_tie_uses_largest_snapshot_id_deterministically():
+    day = date(2026, 5, 14)
+    cutoff = datetime(2026, 5, 14, 16, tzinfo=UTC)
+    first = observation(day, "2", snapshot_id=20, as_of=cutoff)
+    second = observation(day, "3", snapshot_id=21, as_of=cutoff)
+    one = calculate(second, (first, second), (day,))
+    two = calculate(second, (second, first), (day,))
+    assert one == two
+    assert one.observations[0].snapshot_id == 20
+    assert not one.observations[0].included
+    assert one.observations[1].snapshot_id == 21
+    assert one.observations[1].included
+
+
+def test_repeated_reference_to_same_snapshot_is_audited_only_once():
+    day = date(2026, 5, 14)
+    item = observation(day, "2", snapshot_id=20)
+    result = calculate(item, (item, item), (day,))
+    assert len(result.observations) == 1
+    assert result.observations[0].snapshot_id == 20
+    assert result.observations[0].included
+    assert result.valid_observations == 1
+    assert result.excluded_observations == 0
+
+
+def test_invalid_latest_snapshot_is_not_replaced_by_older_valid_snapshot():
+    day = date(2026, 5, 14)
+    valid = observation(
+        day, "2", snapshot_id=1, as_of=datetime(2026, 5, 14, 8, tzinfo=UTC)
+    )
+    invalid = observation(
+        day,
+        None,
+        status="INVALID_INPUT",
+        unavailable_reason="Invalid financial input.",
+        snapshot_id=2,
+        as_of=datetime(2026, 5, 14, 16, tzinfo=UTC),
+    )
+    result = calculate(invalid, (valid, invalid), (day,))
+    audits = {row.snapshot_id: row for row in result.observations}
+    assert len(audits) == 2
+    assert audits[1].reason == "Superseded by a later eligible snapshot."
+    assert audits[2].reason == "Invalid financial input."
+    assert result.valid_observations == 0
+    assert result.excluded_observations == 2
+
+
+@pytest.mark.parametrize("metric", list(PercentileMetric))
+@pytest.mark.parametrize(
+    ("source_ids", "expected_reason"),
+    [
+        ((1,), None),
+        ((1, 2), "unselected financial sources"),
+        ((2,), "does not use requested financial source"),
+        ((), "metadata is missing"),
+    ],
+)
+def test_explicit_financial_source_requires_exact_match_for_all_metrics(
+    metric, source_ids, expected_reason
+):
+    day = date(2026, 5, 14)
+    request = HistoricalValuationPercentileRequest(
+        security_id=1,
+        metric=metric,
+        lookback_period=ValuationLookbackPeriod.THREE_YEARS,
+        as_of=AS_OF,
+        calendar_id="TEST",
+        financial_source_id=1,
+    )
+    item = observation(day, "2")
+    item = replace(item, financial_source_ids=source_ids)
+    validated = CalculateHistoricalValuationPercentile._validate_sources(
+        (item,), request
+    )[0]
+    if expected_reason is None:
+        assert validated.exclusion_reason is None
+    else:
+        assert expected_reason in (validated.exclusion_reason or "")
+
+
+@pytest.mark.parametrize("source_ids", [(), (1, 2)])
+def test_unselected_financial_metadata_requires_explicit_deterministic_policy(
+    source_ids,
+):
+    day = date(2026, 5, 14)
+    request = HistoricalValuationPercentileRequest(
+        security_id=1,
+        metric=PercentileMetric.PER,
+        lookback_period=ValuationLookbackPeriod.THREE_YEARS,
+        as_of=AS_OF,
+        calendar_id="TEST",
+    )
+    item = observation(day, "2")
+    item = replace(item, financial_source_ids=source_ids)
+    with pytest.raises(DomainValidationError, match="source"):
+        CalculateHistoricalValuationPercentile._validate_sources((item,), request)
+
+
 def test_insufficient_samples_missing_calendar_and_invalid_current_are_explicit():
     day = date(2026, 5, 14)
     valid = observation(day, "2")
@@ -199,8 +320,10 @@ def test_insufficient_samples_missing_calendar_and_invalid_current_are_explicit(
 
 def test_future_cutoff_and_non_session_observations_are_excluded():
     day = date(2026, 5, 14)
-    future_cutoff = observation(day, "3", as_of=datetime(2026, 5, 15, tzinfo=UTC))
-    non_session = observation(day + timedelta(days=1), "4")
+    future_cutoff = observation(
+        day, "3", snapshot_id=1, as_of=datetime(2026, 5, 15, tzinfo=UTC)
+    )
+    non_session = observation(day + timedelta(days=1), "4", snapshot_id=4)
     late_revision = observation(
         day,
         "99",
@@ -217,6 +340,7 @@ def test_future_cutoff_and_non_session_observations_are_excluded():
                 period_end=day,
             ),
         ),
+        snapshot_id=2,
     )
     valid = observation(day, "2", snapshot_id=3)
     result = calculate(
@@ -315,6 +439,17 @@ class _HistoricalSprintTen:
             request.as_of,
             observation_date=request.as_of.date(),
         )
+        financial_reference = ValuationInputReference(
+            "FINANCIAL_LINE",
+            31,
+            1,
+            1,
+            request.as_of,
+            parent_record_id=41,
+            financial_item_code="EPS",
+            financial_period="FY",
+            period_end=date(request.as_of.year - 1, 12, 31),
+        )
         return tuple(
             SimpleNamespace(
                 id=metric_index,
@@ -324,7 +459,7 @@ class _HistoricalSprintTen:
                 requested_window_years=request.window_years,
                 effective_window_years=request.window_years,
                 da_sign_convention=request.da_sign_convention,
-                valuation_input_references=(price_reference,),
+                valuation_input_references=(price_reference, financial_reference),
                 normalized_valuation_status=ValuationResultStatus.AVAILABLE,
                 normalized_valuation_value=Decimal("10"),
                 currency="USD",
@@ -428,6 +563,7 @@ def test_application_supports_all_five_metrics_and_cached_pit_normalized_history
                 lookback_period=ValuationLookbackPeriod.THREE_YEARS,
                 as_of=AS_OF,
                 calendar_id="TEST",
+                financial_source_id=1,
                 da_sign_convention=DepreciationAmortizationSignConvention.POSITIVE_EXPENSE,
                 policy=PercentilePolicy(1, 10, 20, Decimal("0.8")),
             )

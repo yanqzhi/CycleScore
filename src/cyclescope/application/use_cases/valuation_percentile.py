@@ -1,5 +1,6 @@
 """Build PIT daily valuation distributions and persist ECDF snapshots."""
 
+from dataclasses import replace
 from datetime import UTC, date
 
 from cyclescope.application.dto.normalized_earnings import NormalizedEarningsRequest
@@ -56,33 +57,6 @@ _NORMALIZED_METRIC = {
 }
 
 
-def _normalized_source_match(
-    result: NormalizedEarningsResult,
-    base: ValuationMetricValue,
-    request: HistoricalValuationPercentileRequest,
-) -> bool:
-    price_sources = {
-        reference.source_id
-        for reference in result.valuation_input_references
-        if reference.record_type == "DAILY_PRICE"
-    }
-    financial_sources = {
-        reference.source_id
-        for reference in result.valuation_input_references
-        if reference.record_type == "FINANCIAL_LINE"
-    }
-    if request.market_source_id is not None:
-        if price_sources != {request.market_source_id}:
-            return False
-    elif base.price_source_id is not None and price_sources != {base.price_source_id}:
-        return False
-    if request.financial_source_id is not None:
-        return financial_sources == {request.financial_source_id}
-    return not base.financial_source_ids or financial_sources == set(
-        base.financial_source_ids
-    )
-
-
 class CalculateHistoricalValuationPercentile:
     """Calculate one metric, rebuilding missing history through Sprint 10."""
 
@@ -135,14 +109,10 @@ class CalculateHistoricalValuationPercentile:
                 request.market_source_id is None
                 or item.market_source_id == request.market_source_id
             )
-            and (
-                request.financial_source_id is None
-                or item.financial_source_ids == (request.financial_source_id,)
-            )
         )
-        self._validate_sources(raw, request)
+        raw = self._validate_sources(raw, request)
         current = max(
-            raw,
+            (item for item in raw if item.exclusion_reason is None),
             key=lambda item: (
                 item.observation_date,
                 item.as_of,
@@ -215,14 +185,7 @@ class CalculateHistoricalValuationPercentile:
                 request.market_source_id is None
                 or row.price_source_id == request.market_source_id
             )
-            and (
-                request.financial_source_id is None
-                or row.financial_source_ids == (request.financial_source_id,)
-            )
         ]
-        self._validate_sources(
-            tuple(self._from_valuation(row) for row in base_rows), request
-        )
         normalized_rows = self._normalized_earnings.list_by_company(
             security.company_id,
             metric=earnings_metric,
@@ -239,35 +202,37 @@ class CalculateHistoricalValuationPercentile:
                 and row.method == request.normalization_method
                 and row.requested_window_years == request.normalization_window_years
                 and row.da_sign_convention == request.da_sign_convention
-                and _normalized_source_match(row, base, request)
             ]
-            selected = max(matches, key=lambda row: row.id or 0, default=None)
-            if selected is None:
-                inputs = self._valuation_input_builder.execute(
-                    ValuationInputRequest(
-                        security_id=request.security_id,
-                        valuation_date=base.observation_date,
-                        as_of=base.as_of,
-                        financial_source_id=request.financial_source_id,
-                        market_source_id=request.market_source_id,
-                    )
+            if matches:
+                output.extend(
+                    self._from_normalized(row, base)
+                    for row in matches
+                    if row.normalized_valuation_status is not None
                 )
-                generated = self._normalized_calculator.execute(
-                    NormalizedEarningsRequest(
-                        company_id=security.company_id,
-                        security_id=request.security_id,
-                        as_of=base.as_of,
-                        window_years=request.normalization_window_years,
-                        method=request.normalization_method,
-                        da_sign_convention=request.da_sign_convention,
-                        source_id=request.financial_source_id,
-                        valuation_inputs=inputs,
-                    )
+                continue
+            inputs = self._valuation_input_builder.execute(
+                ValuationInputRequest(
+                    security_id=request.security_id,
+                    valuation_date=base.observation_date,
+                    as_of=base.as_of,
+                    financial_source_id=request.financial_source_id,
+                    market_source_id=request.market_source_id,
                 )
-                selected = next(
-                    row for row in generated if row.metric == earnings_metric
+            )
+            generated = self._normalized_calculator.execute(
+                NormalizedEarningsRequest(
+                    company_id=security.company_id,
+                    security_id=request.security_id,
+                    as_of=base.as_of,
+                    window_years=request.normalization_window_years,
+                    method=request.normalization_method,
+                    da_sign_convention=request.da_sign_convention,
+                    source_id=request.financial_source_id,
+                    valuation_inputs=inputs,
                 )
-                normalized_rows.extend(generated)
+            )
+            selected = next(row for row in generated if row.metric == earnings_metric)
+            normalized_rows.extend(generated)
             if selected.normalized_valuation_status is not None:
                 output.append(self._from_normalized(selected, base))
         return tuple(output)
@@ -333,7 +298,7 @@ class CalculateHistoricalValuationPercentile:
             market_source_id=(
                 price_refs[0].source_id if price_refs else base.price_source_id
             ),
-            financial_source_ids=sources or base.financial_source_ids,
+            financial_source_ids=sources,
             snapshot_id=base.id,
             normalized_earnings_result_id=row.id,
             references=row.valuation_input_references,
@@ -349,37 +314,76 @@ class CalculateHistoricalValuationPercentile:
     def _validate_sources(
         observations: tuple[HistoricalValuationObservation, ...],
         request: HistoricalValuationPercentileRequest,
-    ) -> None:
+    ) -> tuple[HistoricalValuationObservation, ...]:
         relevant = tuple(
             item
             for item in observations
-            if (
-                request.market_source_id is None
-                or item.market_source_id == request.market_source_id
-            )
-            and (
-                request.financial_source_id is None
-                or request.financial_source_id in item.financial_source_ids
-            )
+            if request.market_source_id is None
+            or item.market_source_id == request.market_source_id
         )
         if request.market_source_id is None:
-            sources = {
+            market_sources = {
                 item.market_source_id for item in relevant if item.market_source_id
             }
-            if len(sources) > 1:
+            if len(market_sources) > 1:
                 raise DomainValidationError(
                     "market_source_id is required when multiple sources are eligible."
                 )
         if request.financial_source_id is None:
             source_sets = {
-                item.financial_source_ids
-                for item in relevant
-                if item.financial_source_ids
+                tuple(sorted(set(item.financial_source_ids))) for item in relevant
             }
+            if any(not sources for sources in source_sets):
+                raise DomainValidationError(
+                    "financial source metadata is required when no "
+                    "financial_source_id is selected."
+                )
+            if any(len(sources) != 1 for sources in source_sets):
+                raise DomainValidationError(
+                    "multi-source financial observations require an explicit "
+                    "deterministic source policy."
+                )
             if len(source_sets) > 1:
                 raise DomainValidationError(
                     "financial_source_id is required when financial sources differ."
                 )
+            return observations
+
+        selected_source = request.financial_source_id
+        validated = []
+        for item in observations:
+            financial_ids = tuple(sorted(set(item.financial_source_ids)))
+            reason = None
+            if not financial_ids:
+                reason = (
+                    "Financial source metadata is missing; requested source "
+                    f"{selected_source} cannot be verified."
+                )
+            elif financial_ids != (selected_source,):
+                additional = tuple(
+                    source for source in financial_ids if source != selected_source
+                )
+                if selected_source in financial_ids:
+                    reason = (
+                        "Observation contains unselected financial sources: "
+                        f"{additional}."
+                    )
+                else:
+                    reason = (
+                        f"Observation does not use requested financial source "
+                        f"{selected_source}; recorded sources are {financial_ids}."
+                    )
+            validated.append(
+                replace(
+                    item,
+                    exclusion_reason=(
+                        f"{item.exclusion_reason}; {reason}"
+                        if item.exclusion_reason and reason
+                        else reason or item.exclusion_reason
+                    ),
+                )
+            )
+        return tuple(validated)
 
 
 class GetHistoricalValuationPercentiles:

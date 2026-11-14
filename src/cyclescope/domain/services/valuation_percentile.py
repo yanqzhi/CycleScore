@@ -40,21 +40,42 @@ def calculate_valuation_percentile(
     """
     selected_policy = policy or PercentilePolicy()
     audit: list[PercentileObservationAudit] = []
-    latest: dict[date, HistoricalValuationObservation] = {}
+    eligible_by_date: dict[date, list[HistoricalValuationObservation]] = {}
+    unique_snapshots: dict[tuple[str, int | str], HistoricalValuationObservation] = {}
     for item in sorted(
         observations,
-        key=lambda row: (row.observation_date, row.as_of, row.snapshot_id or 0),
+        key=lambda row: (
+            row.observation_date,
+            row.as_of,
+            row.snapshot_id or 0,
+            row.normalized_earnings_result_id or 0,
+        ),
     ):
-        pit_reason = _point_in_time_reason(item)
+        identity = (
+            ("normalized", item.normalized_earnings_result_id)
+            if item.normalized_earnings_result_id is not None
+            else ("valuation", item.snapshot_id)
+            if item.snapshot_id is not None
+            else ("anonymous", repr(item))
+        )
+        if identity in unique_snapshots:
+            continue
+        unique_snapshots[identity] = item
+
+    for item in unique_snapshots.values():
+        pit_reason = item.exclusion_reason or _point_in_time_reason(item)
         if pit_reason:
             audit.append(_audit(item, False, pit_reason))
             continue
-        previous = latest.get(item.observation_date)
-        if previous is not None:
+        eligible_by_date.setdefault(item.observation_date, []).append(item)
+
+    latest: dict[date, HistoricalValuationObservation] = {}
+    for observation_date, snapshots in eligible_by_date.items():
+        for superseded in snapshots[:-1]:
             audit.append(
-                _audit(item, False, "Superseded by a later eligible snapshot.")
+                _audit(superseded, False, "Superseded by a later eligible snapshot.")
             )
-        latest[item.observation_date] = item
+        latest[observation_date] = snapshots[-1]
 
     expected = set(expected_sessions or ())
     valid: list[HistoricalValuationObservation] = []
@@ -150,7 +171,7 @@ def calculate_valuation_percentile(
         historical_maximum=ordered_values[-1] if ordered_values else None,
         historical_median=median,
         valid_observations=count,
-        excluded_observations=len(audit) - count,
+        excluded_observations=sum(not item.included for item in audit),
         expected_observations=len(expected_sessions)
         if expected_sessions is not None
         else None,
@@ -158,7 +179,9 @@ def calculate_valuation_percentile(
         status=status,
         confidence=confidence,
         data_quality=(
-            "CLEAN" if not audit or len(audit) == count else "EXCLUSIONS_PRESENT"
+            "CLEAN"
+            if not any(not item.included for item in audit)
+            else "EXCLUSIONS_PRESENT"
         ),
         currency=currency,
         unit=unit,

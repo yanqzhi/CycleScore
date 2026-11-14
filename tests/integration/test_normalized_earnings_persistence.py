@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -448,3 +449,22 @@ def test_normalized_earnings_are_pit_auditable_and_append_only(session):
                 method=NormalizationMethod.ARITHMETIC_MEAN,
             )
         )
+
+    transaction = session.begin_nested()
+    pending = calculator.execute(request)
+    pending_eps = next(row for row in pending if row.metric == EarningsMetric.EPS)
+    percentile_repository.create(
+        replace(
+            normalized_percentile,
+            as_of=AS_OF + timedelta(days=1),
+            observations=(
+                replace(
+                    normalized_percentile.observations[0],
+                    normalized_earnings_result_id=pending_eps.id,
+                ),
+            ),
+        )
+    )
+    transaction.rollback()
+    assert len(result_repo.list_by_company(company.id, metric=EarningsMetric.EPS)) == 2
+    assert len(percentile_repository.list_by_security(security.id)) == 1
