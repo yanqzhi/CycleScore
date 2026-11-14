@@ -3,9 +3,14 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
-from cyclescope.application.dto.ingestion import DataFetchRequest, IngestionErrorCode
+from cyclescope.application.dto.ingestion import (
+    DataFetchRequest,
+    IngestionAdapterError,
+    IngestionErrorCode,
+)
 from cyclescope.application.dto.market_data_ingestion import (
     FX_DAILY_DATASET,
     PRICES_DAILY_DATASET,
@@ -27,6 +32,9 @@ from cyclescope.infrastructure.database.models.ingestion import (
 from cyclescope.infrastructure.database.repositories.market_data import (
     SQLAlchemyDailyPriceRepository,
     SQLAlchemyFxRateRepository,
+)
+from cyclescope.infrastructure.ingestion.adapters.csv_market_data_adapter import (
+    CsvMarketDataAdapter,
 )
 from cyclescope.infrastructure.ingestion.csv_market_data_pipeline import (
     CsvMarketDataIngestion,
@@ -255,3 +263,30 @@ def test_run_rejects_completion_before_start():
     run = IngestionRun.start(1, "prices.daily", NOW)
     with pytest.raises(DomainValidationError, match="precede"):
         run.finish(IngestionStatus.SUCCEEDED, NOW - timedelta(seconds=1))
+
+
+def test_csv_adapter_rejects_unsupported_parameters_and_checks_size_before_read(
+    tmp_path: Path, monkeypatch
+):
+    path = tmp_path / "large.csv"
+    path.write_bytes(b"x" * 20)
+    adapter = CsvMarketDataAdapter(price_path=path, max_payload_bytes=10)
+
+    def unexpected_read(_path):
+        raise AssertionError("oversized input must be rejected before reading")
+
+    monkeypatch.setattr(Path, "read_bytes", unexpected_read)
+    with pytest.raises(IngestionAdapterError) as error:
+        adapter.fetch(_request(1, PRICES_DAILY_DATASET))
+    assert error.value.pipeline_error_code == IngestionErrorCode.PAYLOAD_TOO_LARGE
+
+    small = tmp_path / "small.csv"
+    small.write_text("date,open,high,low,close,volume\n", encoding="utf-8")
+    adapter = CsvMarketDataAdapter(price_path=small)
+    unsupported = DataFetchRequest(
+        1, PRICES_DAILY_DATASET, {"start_date": "2026-01-01"}, NOW
+    )
+    with pytest.raises(
+        IngestionAdapterError, match="do not support request parameters"
+    ):
+        adapter.fetch(unsupported)

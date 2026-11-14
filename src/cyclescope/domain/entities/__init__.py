@@ -3,6 +3,7 @@
 from cyclescope.domain.entities.company import Company
 from cyclescope.domain.entities.company_industry_exposure import CompanyIndustryExposure
 from cyclescope.domain.entities.daily_price import DailyPrice
+from cyclescope.domain.entities.data_quality import DataAnomaly, DataQualityReport
 from cyclescope.domain.entities.data_source import DataSource
 from cyclescope.domain.entities.exchange import Exchange
 from cyclescope.domain.entities.financial_data import (
@@ -25,6 +26,8 @@ __all__ = [
     "CompanyIndustryExposure",
     "DailyPrice",
     "DataSource",
+    "DataAnomaly",
+    "DataQualityReport",
     "Exchange",
     "FxRate",
     "FinancialItem",

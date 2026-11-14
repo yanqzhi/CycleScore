@@ -174,10 +174,11 @@ def test_transform_failure_retains_raw_payload_for_replay(session):
     result = make_pipeline(
         session,
         source_id,
-        transformer=MockTransformer(failure=ValueError("bad document")),
+        transformer=MockTransformer(failure=RuntimeError("api_key=hidden-value")),
     ).execute(make_request(source_id))
     assert result.run.status == IngestionStatus.FAILED
     assert result.run.error_code == IngestionErrorCode.TRANSFORMATION_FAILED.value
+    assert "hidden-value" not in (result.run.error_message or "")
     raw = session.get(RawDataRecordModel, result.run.raw_data_record_id)
     assert raw is not None and raw.payload == b"raw-payload"
 

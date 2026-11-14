@@ -291,9 +291,15 @@ class ExecuteDataIngestionPipeline[NormalizedT]:
         fetched_count: int = 0,
         transformed_count: int = 0,
     ) -> PipelineExecutionResult[NormalizedT]:
-        issue = PipelineIssue(
-            code, sanitize_error_message(f"{type(exc).__name__}: {exc}")
-        )
+        if isinstance(exc, (DomainValidationError, IngestionAdapterError)):
+            diagnostic = sanitize_error_message(str(exc))
+        else:
+            # Arbitrary provider/driver exceptions may embed URLs, headers, SQL,
+            # or credentials. Persist the typed code and exception class only.
+            diagnostic = (
+                f"Operation failed ({type(exc).__name__}); details were omitted."
+            )
+        issue = PipelineIssue(code, diagnostic)
         result_run = self._finish(
             run,
             IngestionStatus.FAILED,

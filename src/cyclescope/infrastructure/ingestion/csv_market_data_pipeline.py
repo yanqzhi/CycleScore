@@ -47,7 +47,11 @@ class CsvMarketDataIngestion:
         self._session = session
         self._price_repository = price_repository
         self._fx_repository = fx_repository
-        self._adapter = CsvMarketDataAdapter(price_path=price_path, fx_path=fx_path)
+        self._adapter = CsvMarketDataAdapter(
+            price_path=price_path,
+            fx_path=fx_path,
+            max_payload_bytes=max_payload_bytes,
+        )
         self._max_payload_bytes = max_payload_bytes
 
     def import_prices(

@@ -1,5 +1,8 @@
 """SQLAlchemy repository implementations."""
 
+from cyclescope.infrastructure.database.repositories.data_quality import (
+    SQLAlchemyDataQualityRepository,
+)
 from cyclescope.infrastructure.database.repositories.market_data import (
     SQLAlchemyDailyPriceRepository,
     SQLAlchemyFxRateRepository,
@@ -22,6 +25,7 @@ __all__ = [
     "SecuritySqlAlchemyRepository",
     "SQLAlchemyDailyPriceRepository",
     "SQLAlchemyFxRateRepository",
+    "SQLAlchemyDataQualityRepository",
     "SQLAlchemyIngestionRunRepository",
     "SQLAlchemyRawDataRepository",
     "SQLAlchemyFinancialItemMappingRepository",

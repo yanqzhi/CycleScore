@@ -1,5 +1,9 @@
 """Database model declarations."""
 
+from cyclescope.infrastructure.database.models.data_quality import (
+    DataAnomalyModel,
+    DataQualityReportModel,
+)
 from cyclescope.infrastructure.database.models.financial_data import (
     FinancialItemMappingModel,
     FinancialItemModel,
@@ -31,6 +35,8 @@ __all__ = [
     "ExchangeModel",
     "DailyPriceModel",
     "FxRateModel",
+    "DataQualityReportModel",
+    "DataAnomalyModel",
     "IngestionRunModel",
     "RawDataRecordModel",
     "IndustryModel",

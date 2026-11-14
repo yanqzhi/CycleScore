@@ -81,6 +81,8 @@ def test_market_data_migration_preserves_master_data_and_enforces_foreign_keys(
         "listings",
         "listing_status_events",
         "legacy_listing_reconciliation",
+        "data_quality_reports",
+        "data_anomalies",
     }.issubset(set(inspect(engine).get_table_names()))
     with Session(engine) as session:
         existing = session.query(IndustryModel).filter_by(code="KEEP").one()

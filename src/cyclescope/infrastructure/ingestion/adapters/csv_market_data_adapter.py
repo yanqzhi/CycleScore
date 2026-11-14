@@ -51,12 +51,22 @@ class CsvMarketDataAdapter:
         *,
         price_path: Path | None = None,
         fx_path: Path | None = None,
+        max_payload_bytes: int = 50 * 1024 * 1024,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
+        if max_payload_bytes < 1:
+            raise ValueError("max_payload_bytes must be positive.")
         self._paths = {PRICES_DAILY_DATASET: price_path, FX_DAILY_DATASET: fx_path}
+        self._max_payload_bytes = max_payload_bytes
         self._clock = clock
 
     def fetch(self, request: DataFetchRequest) -> RawDataBatch:
+        if request.request_parameters:
+            raise IngestionAdapterError(
+                IngestionErrorCode.ACQUISITION_FAILED,
+                "CSV imports do not support request parameters; filter the input "
+                "file before import.",
+            )
         if request.dataset_code not in self._paths:
             raise IngestionAdapterError(
                 IngestionErrorCode.UNKNOWN_DATASET,
@@ -69,7 +79,14 @@ class CsvMarketDataAdapter:
                 f"No CSV file configured for {request.dataset_code}.",
             )
         try:
+            if path.stat().st_size > self._max_payload_bytes:
+                raise IngestionAdapterError(
+                    IngestionErrorCode.PAYLOAD_TOO_LARGE,
+                    f"Configured CSV exceeds the {self._max_payload_bytes}-byte limit.",
+                )
             payload = path.read_bytes()
+        except IngestionAdapterError:
+            raise
         except OSError as exc:
             raise IngestionAdapterError(
                 IngestionErrorCode.ACQUISITION_FAILED,

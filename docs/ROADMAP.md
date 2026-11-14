@@ -8,11 +8,12 @@
 - Sprint 04: Point-in-time financial statement, item, mapping, and revision foundation.
 - Sprint 05: Generic data-ingestion contracts, raw acquisition retention, run tracking, and mock end-to-end orchestration.
 - Sprint 06: CSV `prices.daily` and `fx.daily` integration with shared DTOs and validation, existing repository idempotency, and normalized SAVEPOINT persistence.
+- Sprint 07: Market-data quality reports, exchange trading sessions, configurable outlier candidates, append-only anomaly history, and source-scoped point-in-time revision review.
 
 ## Recommended next step
 
-Add a dedicated raw replay workflow and decide whether financial statement imports need the same pipeline. Keep live providers, scheduling, parallel workers, taxonomy automation, and analytical engines in later work.
+Add raw replay workflows and decide whether financial statement imports need the same pipeline. Keep live providers, scheduling, parallel workers, taxonomy automation, and analytical engines in later work.
 
 ## Current boundary
 
-Sprint 06 adds CSV only for daily prices and FX. Other CSV datasets, financial statement integration, live providers (including IBKR), and automated scheduling remain out of scope.
+Quality thresholds need market-specific calibration and review; corporate actions can produce legitimate extreme moves, and configured holiday calendars need maintenance. Other CSV datasets, financial statement integration, live providers (including IBKR), automated scheduling, and analytical engines remain out of scope.
