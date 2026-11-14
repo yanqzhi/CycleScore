@@ -37,6 +37,10 @@ from cyclescope.infrastructure.database.models.valuation import (
     ValuationMetricModel,
     ValuationSnapshotInputModel,
 )
+from cyclescope.infrastructure.database.models.valuation_percentile import (
+    ValuationPercentileInputModel,
+    ValuationPercentileResultModel,
+)
 
 __all__ = [
     "CompanyModel",
@@ -66,6 +70,8 @@ __all__ = [
     "ValuationSnapshotInputModel",
     "NormalizedEarningsResultModel",
     "NormalizedEarningsInputRefModel",
+    "ValuationPercentileResultModel",
+    "ValuationPercentileInputModel",
 ]
 
 from cyclescope.infrastructure.database.models.ingestion import (

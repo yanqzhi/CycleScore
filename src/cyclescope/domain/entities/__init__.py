@@ -35,6 +35,16 @@ from cyclescope.domain.entities.valuation import (
     ValuationResultStatus,
     ValuationUnit,
 )
+from cyclescope.domain.entities.valuation_percentile import (
+    HistoricalValuationObservation,
+    PercentileConfidence,
+    PercentileMethod,
+    PercentileMetric,
+    PercentilePolicy,
+    ValuationLookbackPeriod,
+    ValuationPercentileResult,
+    ValuationPercentileStatus,
+)
 
 __all__ = [
     "Company",
@@ -68,4 +78,12 @@ __all__ = [
     "ValuationMetricValue",
     "ValuationResultStatus",
     "ValuationUnit",
+    "HistoricalValuationObservation",
+    "PercentileConfidence",
+    "PercentileMetric",
+    "PercentileMethod",
+    "PercentilePolicy",
+    "ValuationLookbackPeriod",
+    "ValuationPercentileResult",
+    "ValuationPercentileStatus",
 ]

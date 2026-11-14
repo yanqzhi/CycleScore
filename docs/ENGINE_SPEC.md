@@ -19,6 +19,10 @@ flowchart LR
     Reports --> Consumer[Future analytical engine]
     Query --> Consumer
     Consumer -->|explicit source and as_of| Query
+    Valuation[(PIT valuation snapshots)] --> Percentile[Historical ECDF percentiles]
+    Earnings[(PIT normalized earnings)] --> Percentile
+    Calendar --> Percentile
+    Percentile --> PercentileSnapshots[(Append-only percentile snapshots)]
 ```
 
 ## Consumption requirements
@@ -33,6 +37,8 @@ An engine should inspect the corresponding quality report and open anomaly candi
 
 No analytical engine consumes quality reports yet. The weekday/holiday calendar is a configurable deterministic foundation, not a full exchange schedule. Price and FX outlier thresholds require market-specific calibration; corporate actions and venue changes can cause legitimate discontinuities. SQL-backed point-in-time queries use window ranking and source/date indexes; large requested date ranges still naturally return all matching observations. Financial statements are not part of this quality workflow.
 
-The valuation data foundation is defined in [VALUATION_SPEC.md](VALUATION_SPEC.md). It uses explicit PIT price and financial inputs and appends traceable metric snapshots. It does not calculate composite scores or percentiles. H1/9M cumulative statements, incompatible quarters, currency conversion, and incomplete TTM histories remain unavailable rather than being guessed or annualized.
+The valuation data foundation is defined in [VALUATION_SPEC.md](VALUATION_SPEC.md). It uses explicit PIT price and financial inputs and appends traceable metric snapshots. Sprint 11 adds historical ECDF percentile comparisons for PER, PBR, EV/EBITDA, normalized PER, and normalized EV/EBITDA; these are individual metrics, not composite scores. H1/9M cumulative statements, incompatible quarters, currency conversion, and incomplete TTM histories remain unavailable rather than being guessed or annualized.
 
 Normalized historical earnings use only eligible annual FY statements from the explicit `as_of` view. Coverage/confidence and peak/trough candidates are analytical metadata, not a cycle-stage score. Normalized PER and EV/EBITDA reuse the existing valuation formulas; see [NORMALIZED_EARNINGS_SPEC.md](NORMALIZED_EARNINGS_SPEC.md).
+
+Historical valuation percentiles consume the latest eligible Sprint 09 snapshot per trading date and metric. They use an exchange trading calendar for coverage, retain each source-specific series unless the request chooses source IDs, and compare only matching currency, unit, financial-period basis, and calculation version. Daily observations are retained (not silently resampled); persistence records excluded snapshot reasons and original snapshot links. Missing historical normalized results are rebuilt at each source snapshot's historical `as_of` using Sprint 10 and its existing PIT repository rules. See [HISTORICAL_VALUATION_PERCENTILE_SPEC.md](HISTORICAL_VALUATION_PERCENTILE_SPEC.md).

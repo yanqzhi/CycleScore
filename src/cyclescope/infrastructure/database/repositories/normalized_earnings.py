@@ -228,12 +228,18 @@ class SQLAlchemyNormalizedEarningsRepository(NormalizedEarningsRepository):
         *,
         metric: EarningsMetric | None = None,
         as_of: datetime | None = None,
+        start_date: date | None = None,
     ) -> list[NormalizedEarningsResult]:
         query = select(NormalizedEarningsResultModel).where(
             NormalizedEarningsResultModel.company_id == company_id
         )
         if metric is not None:
             query = query.where(NormalizedEarningsResultModel.metric == metric.value)
+        if start_date is not None:
+            query = query.where(
+                NormalizedEarningsResultModel.as_of
+                >= datetime.combine(start_date, datetime.min.time(), UTC)
+            )
         if as_of is not None:
             if as_of.tzinfo is None or as_of.utcoffset() is None:
                 from cyclescope.domain.exceptions import DomainValidationError

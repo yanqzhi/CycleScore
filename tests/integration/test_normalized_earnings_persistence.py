@@ -18,6 +18,15 @@ from cyclescope.domain.entities.valuation import (
     ValuationInputReference,
     ValuationInputs,
 )
+from cyclescope.domain.entities.valuation_percentile import (
+    PercentileConfidence,
+    PercentileMethod,
+    PercentileMetric,
+    PercentileObservationAudit,
+    ValuationLookbackPeriod,
+    ValuationPercentileResult,
+    ValuationPercentileStatus,
+)
 from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.domain.value_objects.financial_data import StatementType, UnitDimension
 from cyclescope.infrastructure.database.models import (
@@ -35,6 +44,9 @@ from cyclescope.infrastructure.database.repositories.financial_data import (
 )
 from cyclescope.infrastructure.database.repositories.normalized_earnings import (
     SQLAlchemyNormalizedEarningsRepository,
+)
+from cyclescope.infrastructure.database.repositories.valuation_percentile import (
+    SQLAlchemyValuationPercentileRepository,
 )
 
 AS_OF = datetime(2026, 6, 1, 12, tzinfo=UTC)
@@ -367,6 +379,56 @@ def test_normalized_earnings_are_pit_auditable_and_append_only(session):
     assert (
         persisted.da_sign_convention
         == DepreciationAmortizationSignConvention.POSITIVE_EXPENSE
+    )
+    percentile_repository = SQLAlchemyValuationPercentileRepository(session)
+    normalized_eps = by_metric[EarningsMetric.EPS]
+    normalized_percentile = percentile_repository.create(
+        ValuationPercentileResult(
+            security_id=security.id,
+            company_id=company.id,
+            metric=PercentileMetric.NORMALIZED_PER,
+            lookback_period=ValuationLookbackPeriod.THREE_YEARS,
+            method=PercentileMethod.ECDF,
+            as_of=AS_OF,
+            observation_start=AS_OF.date(),
+            observation_end=AS_OF.date(),
+            current_value=normalized_eps.normalized_valuation_value,
+            percentile=None,
+            historical_minimum=None,
+            historical_maximum=None,
+            historical_median=None,
+            valid_observations=1,
+            excluded_observations=0,
+            expected_observations=1,
+            coverage_ratio=Decimal("1"),
+            status=ValuationPercentileStatus.INSUFFICIENT_DATA,
+            confidence=PercentileConfidence.LOW,
+            data_quality="CLEAN",
+            currency="USD",
+            unit="RATIO",
+            financial_period="NORMALIZED:ARITHMETIC_MEAN:5:5",
+            calculation_version=1,
+            status_reason="At least 20 valid daily observations are required.",
+            observations=(
+                PercentileObservationAudit(
+                    observation_date=AS_OF.date(),
+                    value=normalized_eps.normalized_valuation_value,
+                    included=True,
+                    reason=None,
+                    snapshot_id=None,
+                    normalized_earnings_result_id=normalized_eps.id,
+                    market_source_id=source.id,
+                    financial_source_ids=(source.id,),
+                    references=normalized_eps.valuation_input_references,
+                ),
+            ),
+        )
+    )
+    restored_percentile = percentile_repository.get_by_id(normalized_percentile.id or 0)
+    assert restored_percentile is not None
+    assert (
+        restored_percentile.observations[0].references
+        == normalized_eps.valuation_input_references
     )
     assert len(result_repo.list_by_company(company.id, metric=EarningsMetric.EPS)) == 1
     again = calculator.execute(request)

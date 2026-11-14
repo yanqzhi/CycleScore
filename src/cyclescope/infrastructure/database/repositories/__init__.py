@@ -33,6 +33,7 @@ __all__ = [
     "SQLAlchemyFinancialStatementItemRepository",
     "SQLAlchemyFinancialStatementRepository",
     "SQLAlchemyNormalizedEarningsRepository",
+    "SQLAlchemyValuationPercentileRepository",
 ]
 
 from cyclescope.infrastructure.database.repositories.financial_data import (
@@ -47,4 +48,7 @@ from cyclescope.infrastructure.database.repositories.ingestion import (
 )
 from cyclescope.infrastructure.database.repositories.normalized_earnings import (
     SQLAlchemyNormalizedEarningsRepository,
+)
+from cyclescope.infrastructure.database.repositories.valuation_percentile import (
+    SQLAlchemyValuationPercentileRepository,
 )

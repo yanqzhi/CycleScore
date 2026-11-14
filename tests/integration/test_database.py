@@ -97,7 +97,7 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
             ).scalar_one()
-            == "0014_normalized_earnings_currency_windows"
+            == "0015_valuation_percentiles"
         )
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
         assert (
@@ -136,6 +136,39 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
         assert "ix_daily_prices_security_source_date_asof_revision" in price_indexes
         assert "ix_fx_rates_pair_source_date_asof_revision" in fx_indexes
     engine.dispose()
+    command.downgrade(config, "0014_normalized_earnings_currency_windows")
+    check_engine = create_database_engine(f"sqlite:///{database_path}")
+    with check_engine.connect() as connection:
+        percentile_tables = {
+            row[0]
+            for row in connection.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name LIKE 'valuation_percentile_%'"
+            )
+        }
+        assert percentile_tables == set()
+        assert (
+            connection.exec_driver_sql(
+                "SELECT version_num FROM alembic_version"
+            ).scalar_one()
+            == "0014_normalized_earnings_currency_windows"
+        )
+    check_engine.dispose()
+    command.upgrade(config, "head")
+    check_engine = create_database_engine(f"sqlite:///{database_path}")
+    with check_engine.connect() as connection:
+        percentile_tables = {
+            row[0]
+            for row in connection.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name LIKE 'valuation_percentile_%'"
+            )
+        }
+        assert percentile_tables == {
+            "valuation_percentile_results",
+            "valuation_percentile_inputs",
+        }
+    check_engine.dispose()
 
 
 def test_repository_crud(session: Session) -> None:

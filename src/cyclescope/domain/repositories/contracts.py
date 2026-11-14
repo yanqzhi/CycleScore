@@ -31,6 +31,9 @@ from cyclescope.domain.entities.valuation import (
     ValuationMetricDefinition,
     ValuationMetricValue,
 )
+from cyclescope.domain.entities.valuation_percentile import (
+    ValuationPercentileResult,
+)
 from cyclescope.domain.value_objects.financial_data import (
     ConsolidationScope,
     FiscalPeriod,
@@ -444,5 +447,24 @@ class NormalizedEarningsRepository(ABC):
         *,
         metric: EarningsMetric | None = None,
         as_of: datetime | None = None,
+        start_date: date | None = None,
     ) -> list[NormalizedEarningsResult]:
         """List calculations with optional metric and PIT cutoff filters."""
+
+
+class ValuationPercentileRepository(ABC):
+    """Append-only percentile snapshot persistence contract."""
+
+    @abstractmethod
+    def create(self, result: ValuationPercentileResult) -> ValuationPercentileResult:
+        """Append one result and its exact observation audit rows."""
+
+    @abstractmethod
+    def get_by_id(self, result_id: int) -> ValuationPercentileResult | None:
+        """Retrieve a stored percentile snapshot."""
+
+    @abstractmethod
+    def list_by_security(
+        self, security_id: int, *, as_of: datetime | None = None
+    ) -> list[ValuationPercentileResult]:
+        """Read immutable snapshots optionally restricted by their cutoff."""
