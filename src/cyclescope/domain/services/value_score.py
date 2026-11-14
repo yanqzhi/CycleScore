@@ -148,6 +148,7 @@ def score_percentile_family(
         )
     score = _mean(scores)
     missing = len(scores) != len(percentiles)
+    coverage = Decimal(len(scores)) / Decimal(len(percentiles))
     return ValueScoreComponent(
         code=component,
         status=(
@@ -160,6 +161,7 @@ def score_percentile_family(
         measures=tuple(measures),
         input_references=references,
         exclusion_reasons=exclusion_reasons,
+        coverage=coverage,
     )
 
 
@@ -216,14 +218,20 @@ def score_peer_relative(
     *,
     peer_security_ids: tuple[int, ...],
     references: tuple[ValueScoreInputReference, ...],
+    expected_submetrics: int = 3,
+    unavailable_reasons: tuple[tuple[str, str], ...] = (),
 ) -> ValueScoreComponent:
     """Compare each company multiple with a deterministic peer median.
 
     Each tuple is ``(metric code, company multiple, peer median)``. The score
     is ``100 * peer_median / (company_multiple + peer_median)``; equality is 50.
     """
+    if expected_submetrics < 1:
+        raise DomainValidationError("expected_submetrics must be positive.")
     measures = []
     scores = []
+    for code, reason in unavailable_reasons:
+        measures.append(ValueScoreMeasure(code, None, "MULTIPLE", None, reason))
     for code, company_value, peer_median in values:
         if company_value <= 0 or peer_median <= 0:
             measures.append(
@@ -256,22 +264,22 @@ def score_peer_relative(
             references=references,
             peers=peer_security_ids,
         )
+    coverage = Decimal(len(scores)) / Decimal(expected_submetrics)
     return ValueScoreComponent(
         code=ValueScoreComponentCode.RELATIVE_VALUATION,
         status=(
             ValueScoreComponentStatus.PARTIAL
-            if len(scores) != len(values)
+            if coverage < 1
             else ValueScoreComponentStatus.AVAILABLE
         ),
         score=_mean(scores),
         reason=(
-            "One or more relative multiples are unavailable."
-            if len(scores) != len(values)
-            else None
+            "One or more relative multiples are unavailable." if coverage < 1 else None
         ),
         measures=tuple(measures),
         input_references=references,
         peer_security_ids=peer_security_ids,
+        coverage=coverage,
     )
 
 
@@ -285,11 +293,10 @@ def finalize_value_score(
 ) -> ValueScore:
     """Redistribute weights only after the configured coverage minimum is met."""
     weights = config.weight_map
-    available_weight = sum(
+    covered_weight = sum(
         (
-            weights[component.code]
+            weights[component.code] * (component.coverage or Decimal(0))
             for component in components
-            if component.score is not None
         ),
         Decimal(0),
     )
@@ -304,16 +311,19 @@ def finalize_value_score(
             peer_security_ids=component.peer_security_ids,
             original_weight=weights[component.code],
             effective_weight=(
-                weights[component.code] / available_weight
-                if component.score is not None and available_weight > 0
+                weights[component.code]
+                * (component.coverage or Decimal(0))
+                / covered_weight
+                if component.score is not None and covered_weight > 0
                 else Decimal(0)
             ),
             exclusion_reasons=component.exclusion_reasons,
+            coverage=component.coverage,
         )
         for component in components
     )
-    coverage = available_weight
-    if coverage < config.minimum_coverage:
+    coverage = covered_weight
+    if coverage == 0 or coverage < config.minimum_coverage:
         status = ValueScoreStatus.INSUFFICIENT_DATA
         score = None
         confidence = ValueScoreConfidence.INSUFFICIENT
@@ -333,6 +343,7 @@ def finalize_value_score(
                 original_weight=item.original_weight,
                 effective_weight=Decimal(0),
                 exclusion_reasons=item.exclusion_reasons,
+                coverage=item.coverage,
             )
             for item in finalized
         )
@@ -413,6 +424,7 @@ def _unavailable(
         input_references=references,
         peer_security_ids=peers,
         exclusion_reasons=exclusion_reasons,
+        coverage=Decimal(0),
     )
 
 
@@ -428,4 +440,5 @@ def _invalid(
         score=None,
         reason=reason,
         input_references=references,
+        coverage=Decimal(0),
     )

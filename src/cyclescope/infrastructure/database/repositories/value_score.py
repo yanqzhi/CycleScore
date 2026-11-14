@@ -49,6 +49,7 @@ def _component_dict(component: ValueScoreComponent) -> dict[str, object]:
         "original_weight": str(component.original_weight),
         "effective_weight": str(component.effective_weight),
         "exclusion_reasons": list(component.exclusion_reasons),
+        "coverage": str(component.coverage),
         "peer_security_ids": list(component.peer_security_ids),
         "measures": [
             {
@@ -68,6 +69,24 @@ def _domain(row: ValueScoreModel) -> ValueScore:
     components = []
     component_data = cast(list[dict[str, Any]], row.components)
     for item in component_data:
+        measure_data = cast(list[dict[str, Any]], item["measures"])
+        if "coverage" in item:
+            component_coverage = Decimal(item["coverage"])
+        elif item["status"] == ValueScoreComponentStatus.AVAILABLE.value:
+            component_coverage = Decimal(1)
+        elif item["status"] in {
+            ValueScoreComponentStatus.UNAVAILABLE.value,
+            ValueScoreComponentStatus.INVALID_INPUT.value,
+        }:
+            component_coverage = Decimal(0)
+        else:
+            measure_count = len(measure_data)
+            usable_count = sum(measure["score"] is not None for measure in measure_data)
+            component_coverage = (
+                Decimal(usable_count) / Decimal(measure_count)
+                if measure_count and usable_count
+                else Decimal("0.5")
+            )
         refs = tuple(
             ValueScoreInputReference(
                 record_type=ref["record_type"],
@@ -95,7 +114,7 @@ def _domain(row: ValueScoreModel) -> ValueScore:
                 else None,
                 reason=measure["reason"],
             )
-            for measure in item["measures"]
+            for measure in measure_data
         )
         components.append(
             ValueScoreComponent(
@@ -108,7 +127,8 @@ def _domain(row: ValueScoreModel) -> ValueScore:
                 peer_security_ids=tuple(item["peer_security_ids"]),
                 original_weight=Decimal(item["original_weight"]),
                 effective_weight=Decimal(item["effective_weight"]),
-                exclusion_reasons=tuple(item["exclusion_reasons"]),
+                exclusion_reasons=tuple(item.get("exclusion_reasons", ())),
+                coverage=component_coverage,
             )
         )
     return ValueScore(

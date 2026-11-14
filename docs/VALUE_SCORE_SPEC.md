@@ -52,13 +52,30 @@ version are recorded with the measure and score configuration.
 
 ## Missing data, coverage, and confidence
 
-Coverage is the sum of original weights for components with a score. If it is
-below the configured minimum, the result is `INSUFFICIENT_DATA`, has no numeric
-score, and has `INSUFFICIENT` confidence. Otherwise, available component weights
-are renormalized as `original weight / available original weight`. A result is
-`AVAILABLE` only when coverage is 100%, otherwise `PARTIAL`. Confidence is
-computed from coverage thresholds and is stored separately from the score.
-Unavailable inputs are never assigned artificial component scores.
+Each component records its own submetric coverage. A component with one of two
+usable PER/PBR measures has coverage 0.5 and its score is the average of the
+usable measure only; an unavailable measure is never set to zero. A component
+with all its declared submetrics available has coverage 1. A component with no
+usable submetrics has coverage 0 and no score.
+
+Overall data coverage is `sum(original component weight * component coverage)`.
+For score aggregation, each scored component's provisional weight is its
+original weight multiplied by component coverage; provisional weights are then
+normalized to sum to one. Thus a half-covered historical PER/PBR component
+contributes half its original weight to the score and overall coverage, while
+its score remains the mean of the usable submetric scores. If overall coverage
+is below the configured minimum, the result is `INSUFFICIENT_DATA`, has no
+numeric score, and has `INSUFFICIENT` confidence. Otherwise, `AVAILABLE` means
+coverage is 100%; lower usable coverage is `PARTIAL`. Confidence boundaries
+apply to overall data coverage and are stored separately from the numerical
+score.
+
+`DataUnavailable` represents an expected absence of otherwise valid data.
+Only that exception may be translated into an unavailable component. Domain
+validation failures, including source ambiguity, mixed standards/scopes,
+currency or unit conflicts, invalid inputs, and PIT violations, propagate and
+abort the calculation. The score snapshot is appended only after all components
+have completed, and the caller retains transaction ownership.
 
 ## Persistence and limitations
 

@@ -123,6 +123,53 @@ def test_missing_submetrics_are_not_zero_filled() -> None:
     assert result.score == Decimal(80)
     assert result.measures[1].score is None
     assert result.measures[1].reason == "negative equity"
+    assert result.coverage == Decimal("0.5")
+
+
+@pytest.mark.parametrize(
+    ("percentiles", "expected_status", "expected_coverage"),
+    [
+        (
+            (("PER", Decimal(10), None), ("PBR", None, "invalid book value")),
+            ValueScoreComponentStatus.PARTIAL,
+            Decimal("0.5"),
+        ),
+        (
+            (("PER", None, "negative earnings"), ("PBR", Decimal(20), None)),
+            ValueScoreComponentStatus.PARTIAL,
+            Decimal("0.5"),
+        ),
+        (
+            (("PER", Decimal(10), None), ("PBR", Decimal(20), None)),
+            ValueScoreComponentStatus.AVAILABLE,
+            Decimal(1),
+        ),
+        (
+            (("PER", None, "missing"), ("PBR", None, "missing")),
+            ValueScoreComponentStatus.UNAVAILABLE,
+            Decimal(0),
+        ),
+    ],
+)
+def test_percentile_component_coverage(percentiles, expected_status, expected_coverage):
+    result = score_percentile_family(
+        ValueScoreComponentCode.HISTORICAL_VALUATION, percentiles, ()
+    )
+    assert result.status == expected_status
+    assert result.coverage == expected_coverage
+
+
+def test_normalized_per_only_contributes_half_normalized_component_coverage() -> None:
+    result = score_percentile_family(
+        ValueScoreComponentCode.NORMALIZED_EARNINGS_VALUATION,
+        (
+            ("NORMALIZED_PER", Decimal(30), None),
+            ("NORMALIZED_EV_EBITDA", None, "negative normalized EBITDA"),
+        ),
+        (),
+    )
+    assert result.score == Decimal(70)
+    assert result.coverage == Decimal("0.5")
 
 
 @pytest.mark.parametrize(
@@ -243,3 +290,102 @@ def test_sufficient_partial_coverage_redistributes_and_classifies_confidence() -
     assert result.confidence.value == "HIGH"
     assert result.score == Decimal(60)
     assert sum(item.effective_weight for item in result.components) == Decimal(1)
+
+
+def test_partial_submetric_reduces_component_weight_and_overall_coverage() -> None:
+    components = []
+    for code in ValueScoreComponentCode:
+        if code == ValueScoreComponentCode.HISTORICAL_VALUATION:
+            components.append(
+                score_percentile_family(
+                    code,
+                    (("PER", Decimal(20), None), ("PBR", None, "missing")),
+                    (),
+                )
+            )
+        else:
+            components.append(
+                ValueScoreComponent(
+                    code,
+                    ValueScoreComponentStatus.AVAILABLE,
+                    Decimal(80),
+                    None,
+                    measures=(
+                        ValueScoreMeasure(
+                            code.value, Decimal(20), "RATIO", Decimal(80)
+                        ),
+                    ),
+                )
+            )
+    result = finalize_value_score(
+        security_id=1,
+        company_id=1,
+        as_of=datetime(2026, 1, 1, tzinfo=UTC),
+        components=tuple(components),
+        config=ValueScoreConfig(),
+    )
+    historical = next(
+        item
+        for item in result.components
+        if item.code == ValueScoreComponentCode.HISTORICAL_VALUATION
+    )
+    assert historical.coverage == Decimal("0.5")
+    assert result.coverage == Decimal("0.90")
+    assert historical.effective_weight == Decimal("0.20") / Decimal("1.80")
+    assert result.confidence.value == "HIGH"
+
+
+def test_confidence_uses_overall_coverage_boundaries() -> None:
+    codes = tuple(ValueScoreComponentCode)
+
+    def make_component(code, status, score=None, coverage=None):
+        if score is None:
+            return ValueScoreComponent(code, status, None, "missing", coverage=coverage)
+        return ValueScoreComponent(
+            code,
+            status,
+            score,
+            None if status == ValueScoreComponentStatus.AVAILABLE else "partial",
+            measures=(ValueScoreMeasure(code.value, Decimal(1), "RATIO", score),),
+            coverage=coverage,
+        )
+
+    medium_set = tuple(
+        make_component(
+            code,
+            ValueScoreComponentStatus.AVAILABLE
+            if index < 4
+            else ValueScoreComponentStatus.UNAVAILABLE,
+            Decimal(50) if index < 4 else None,
+        )
+        for index, code in enumerate(codes)
+    )
+    medium = finalize_value_score(
+        security_id=1,
+        company_id=1,
+        as_of=datetime(2026, 1, 1, tzinfo=UTC),
+        components=medium_set,
+        config=ValueScoreConfig(),
+    )
+    assert medium.coverage == Decimal("0.75")
+    assert medium.confidence.value == "MEDIUM"
+
+    low_set = (
+        make_component(codes[0], ValueScoreComponentStatus.AVAILABLE, Decimal(50)),
+        make_component(codes[1], ValueScoreComponentStatus.AVAILABLE, Decimal(50)),
+        make_component(codes[2], ValueScoreComponentStatus.AVAILABLE, Decimal(50)),
+        make_component(codes[3], ValueScoreComponentStatus.UNAVAILABLE),
+        make_component(codes[4], ValueScoreComponentStatus.UNAVAILABLE),
+        make_component(
+            codes[5], ValueScoreComponentStatus.PARTIAL, Decimal(50), Decimal("0.5")
+        ),
+    )
+    low = finalize_value_score(
+        security_id=1,
+        company_id=1,
+        as_of=datetime(2026, 1, 1, tzinfo=UTC),
+        components=low_set,
+        config=ValueScoreConfig(),
+    )
+    assert low.coverage == Decimal("0.65")
+    assert low.confidence.value == "LOW"

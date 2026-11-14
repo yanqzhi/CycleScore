@@ -55,3 +55,8 @@ percentile and valuation-input use cases with Domain-owned score formulas. The
 Domain has no SQLAlchemy dependencies. Infrastructure persists immutable score
 snapshots through a create/read repository. See [VALUE_SCORE_SPEC.md](VALUE_SCORE_SPEC.md)
 for component formulas, provenance, and limitations.
+
+Expected missing data is represented by `DataUnavailable` or by absent values
+in a valid result. The Value Score workflow catches only `DataUnavailable`;
+`DomainValidationError` and source/PIT integrity failures propagate to the
+caller before persistence.

@@ -51,3 +51,9 @@ sheet leverage uses the documented Debt/Equity curve, and relative valuation
 uses explicit compatible peers. Missing components remain unavailable; the
 configured minimum coverage gates weight redistribution. See
 [VALUE_SCORE_SPEC.md](VALUE_SCORE_SPEC.md).
+
+Each component carries submetric coverage. Overall coverage is the
+component-weighted sum of submetric coverage; a partially covered component's
+score weight is reduced proportionally before available weights are normalized.
+Expected data absence is distinct from validation/integrity failure: only the
+dedicated `DataUnavailable` exception becomes an unavailable component.

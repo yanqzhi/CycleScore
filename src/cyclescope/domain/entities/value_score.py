@@ -186,6 +186,7 @@ class ValueScoreComponent:
     original_weight: Decimal = Decimal(0)
     effective_weight: Decimal = Decimal(0)
     exclusion_reasons: tuple[str, ...] = ()
+    coverage: Decimal | None = None
 
     def __post_init__(self) -> None:
         if self.score is not None and (
@@ -194,6 +195,20 @@ class ValueScoreComponent:
             raise DomainValidationError("Component scores must be in [0, 100].")
         if self.original_weight < 0 or self.effective_weight < 0:
             raise DomainValidationError("Component weights must not be negative.")
+        coverage = self.coverage
+        if coverage is None:
+            if self.status == ValueScoreComponentStatus.PARTIAL:
+                raise DomainValidationError(
+                    "Partial components must declare submetric coverage."
+                )
+            coverage = (
+                Decimal(1)
+                if self.status == ValueScoreComponentStatus.AVAILABLE
+                else Decimal(0)
+            )
+            object.__setattr__(self, "coverage", coverage)
+        if not coverage.is_finite() or not Decimal(0) <= coverage <= Decimal(1):
+            raise DomainValidationError("Component coverage must be in [0, 1].")
         if (self.score is None) != (
             self.status
             in {
@@ -204,6 +219,19 @@ class ValueScoreComponent:
             raise DomainValidationError("Component score and status conflict.")
         if self.score is None and not self.reason:
             raise DomainValidationError("Unavailable components require a reason.")
+        if self.status == ValueScoreComponentStatus.AVAILABLE and coverage != 1:
+            raise DomainValidationError("Available components require full coverage.")
+        if self.status == ValueScoreComponentStatus.PARTIAL and not 0 < coverage < 1:
+            raise DomainValidationError("Partial components require partial coverage.")
+        if (
+            self.status
+            in {
+                ValueScoreComponentStatus.UNAVAILABLE,
+                ValueScoreComponentStatus.INVALID_INPUT,
+            }
+            and coverage != 0
+        ):
+            raise DomainValidationError("Unavailable components have zero coverage.")
         if any(peer < 1 for peer in self.peer_security_ids):
             raise DomainValidationError("Peer security IDs must be positive.")
 

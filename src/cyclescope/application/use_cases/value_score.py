@@ -32,7 +32,7 @@ from cyclescope.domain.entities.value_score import (
     ValueScoreInputReference,
     ValueScoreMeasure,
 )
-from cyclescope.domain.exceptions import DomainValidationError
+from cyclescope.domain.exceptions import DataUnavailable, DomainValidationError
 from cyclescope.domain.repositories.contracts import (
     CompanyIndustryExposureRepository,
     DailyPriceRepository,
@@ -134,7 +134,7 @@ class CalculateValueScore:
                         )
                     elif row.reason:
                         valuation_exclusions.append(row.reason)
-            except DomainValidationError as exc:
+            except DataUnavailable as exc:
                 valuation_rows.append((metric.value, None, str(exc)))
         historical_component = score_percentile_family(
             ValueScoreComponentCode.HISTORICAL_VALUATION,
@@ -190,7 +190,7 @@ class CalculateValueScore:
                         )
                     elif row.reason:
                         normalized_exclusions.append(row.reason)
-            except DomainValidationError as exc:
+            except DataUnavailable as exc:
                 normalized_rows.append((metric.value, None, str(exc)))
         normalized_component = score_percentile_family(
             ValueScoreComponentCode.NORMALIZED_EARNINGS_VALUATION,
@@ -229,7 +229,7 @@ class CalculateValueScore:
                 maximum_ratio=request.config.maximum_debt_to_equity,
                 references=balance_refs,
             )
-        except DomainValidationError as exc:
+        except DataUnavailable as exc:
             balance_component = _unavailable(
                 ValueScoreComponentCode.BALANCE_SHEET, str(exc)
             )
@@ -310,6 +310,7 @@ class CalculateValueScore:
         values: list[tuple[str, Decimal, Decimal]] = []
         references: list[ValueScoreInputReference] = []
         selected_peers: list[int] = []
+        unavailable_reasons: list[tuple[str, str]] = []
         for metric, code in metric_map:
             rows_by_security = {}
             for peer_id in (request.security_id, *compatible):
@@ -388,7 +389,8 @@ class CalculateValueScore:
                 if company_value is not None:
                     values.append((code, company_value, peer_median))
                     for row in (company_rows[0], *comparable):
-                        selected_peers.append(row.security_id)
+                        if row.security_id != request.security_id:
+                            selected_peers.append(row.security_id)
                         if row.id:
                             references.append(
                                 ValueScoreInputReference(
@@ -402,10 +404,20 @@ class CalculateValueScore:
                                     reference_code=code,
                                 )
                             )
+            else:
+                unavailable_reasons.append(
+                    (
+                        code,
+                        "No source-, currency-, period-, and version-compatible "
+                        "peer sample met the configured minimum.",
+                    )
+                )
         return score_peer_relative(
             tuple(values),
             peer_security_ids=tuple(sorted(set(selected_peers))),
             references=tuple(references),
+            expected_submetrics=len(metric_map),
+            unavailable_reasons=tuple(unavailable_reasons),
         )
 
 

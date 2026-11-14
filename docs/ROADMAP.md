@@ -23,3 +23,7 @@ Value Score v1 is implemented as an append-only point-in-time snapshot engine.
 Cash flow scoring remains unavailable until operating cash flow and CAPEX are
 part of the standardized financial input model. Peer selection remains explicit
 and caller-supplied; automated peer discovery is out of scope.
+
+Review hardening keeps source and PIT integrity failures fatal and records
+submetric coverage explicitly so partial PER/PBR and normalized valuation data
+contribute proportionally to overall coverage and score weighting.
