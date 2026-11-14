@@ -17,3 +17,9 @@ Add raw replay workflows and decide whether financial statement imports need the
 ## Current boundary
 
 Quality thresholds need market-specific calibration and review; corporate actions can produce legitimate extreme moves, and configured holiday calendars need maintenance. Other CSV datasets, financial statement integration, live providers (including IBKR), automated scheduling, and analytical engines remain out of scope.
+# Sprint 12 — Value Score
+
+Value Score v1 is implemented as an append-only point-in-time snapshot engine.
+Cash flow scoring remains unavailable until operating cash flow and CAPEX are
+part of the standardized financial input model. Peer selection remains explicit
+and caller-supplied; automated peer discovery is out of scope.

@@ -45,6 +45,17 @@ from cyclescope.domain.entities.valuation_percentile import (
     ValuationPercentileResult,
     ValuationPercentileStatus,
 )
+from cyclescope.domain.entities.value_score import (
+    ValueScore,
+    ValueScoreComponent,
+    ValueScoreComponentCode,
+    ValueScoreComponentStatus,
+    ValueScoreConfidence,
+    ValueScoreConfig,
+    ValueScoreInputReference,
+    ValueScoreMeasure,
+    ValueScoreStatus,
+)
 
 __all__ = [
     "Company",
@@ -86,4 +97,13 @@ __all__ = [
     "ValuationLookbackPeriod",
     "ValuationPercentileResult",
     "ValuationPercentileStatus",
+    "ValueScore",
+    "ValueScoreComponent",
+    "ValueScoreComponentCode",
+    "ValueScoreComponentStatus",
+    "ValueScoreConfidence",
+    "ValueScoreConfig",
+    "ValueScoreInputReference",
+    "ValueScoreMeasure",
+    "ValueScoreStatus",
 ]

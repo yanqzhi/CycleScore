@@ -41,6 +41,7 @@ from cyclescope.infrastructure.database.models.valuation_percentile import (
     ValuationPercentileInputModel,
     ValuationPercentileResultModel,
 )
+from cyclescope.infrastructure.database.models.value_score import ValueScoreModel
 
 __all__ = [
     "CompanyModel",
@@ -72,6 +73,7 @@ __all__ = [
     "NormalizedEarningsInputRefModel",
     "ValuationPercentileResultModel",
     "ValuationPercentileInputModel",
+    "ValueScoreModel",
 ]
 
 from cyclescope.infrastructure.database.models.ingestion import (

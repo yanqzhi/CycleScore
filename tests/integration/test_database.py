@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -97,7 +98,7 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
             ).scalar_one()
-            == "0015_valuation_percentiles"
+            == "0016_value_scores"
         )
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
         assert (
@@ -135,6 +136,26 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
         }
         assert "ix_daily_prices_security_source_date_asof_revision" in price_indexes
         assert "ix_fx_rates_pair_source_date_asof_revision" in fx_indexes
+    engine.dispose()
+
+
+def test_value_score_migration_downgrade_and_upgrade_are_safe(
+    tmp_path: object,
+) -> None:
+    database_path = tmp_path / "value_score_migration.db"  # type: ignore[operator]
+    config = Config(str(Path.cwd() / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "head")
+    engine = create_database_engine(f"sqlite:///{database_path}")
+    with engine.connect() as connection:
+        assert "value_scores" in inspect(connection).get_table_names()
+    command.downgrade(config, "0015_valuation_percentiles")
+    with engine.connect() as connection:
+        assert "value_scores" not in inspect(connection).get_table_names()
+        assert "valuation_percentile_results" in inspect(connection).get_table_names()
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        assert "value_scores" in inspect(connection).get_table_names()
     engine.dispose()
     command.downgrade(config, "0014_normalized_earnings_currency_windows")
     check_engine = create_database_engine(f"sqlite:///{database_path}")

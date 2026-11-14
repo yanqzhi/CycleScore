@@ -44,3 +44,13 @@ Migration `0015_valuation_percentiles` adds append-only `valuation_percentile_re
 Migration `0013_normalized_earnings` adds append-only `normalized_earnings_results` and `normalized_earnings_input_refs`. Results reference Company and optional Security; input references are foreign-keyed to source, financial statement and statement line, or the exact daily-price row. Decimal statistics and normalized valuation values use `NUMERIC(38, 12)`. No uniqueness rule blocks a recalculation from creating another historical result. See [NORMALIZED_EARNINGS_SPEC.md](NORMALIZED_EARNINGS_SPEC.md).
 
 Migration `0014_normalized_earnings_currency_windows` adds persisted currency and unit metadata, the common fiscal-year window bounds, and the D&A sign convention to normalized earnings results. Existing rows are retained; EPS rows are backfilled with `PER_SHARE`, other metrics with `CURRENCY_AMOUNT`, currencies remain unknown (`NULL`), and legacy D&A conventions are `UNKNOWN`. New schema changes are additive and preserve append-only result history.
+# Value Score snapshots (Sprint 12)
+
+Migration `0016_value_scores` adds an append-only `value_scores` table. Each row
+stores UTC `as_of`, score/status, coverage/confidence, configuration version
+and snapshot, and six serialized component audit records with weights, measures,
+exclusion explanations, peers, and source references. There are no update or
+delete methods on the Domain repository contract. The create operation flushes
+inside the caller's transaction; it never commits. Downgrade drops only the new
+table and index. Historical score inputs are stored as stable JSON references
+because they span several source tables and immutable calculation types.

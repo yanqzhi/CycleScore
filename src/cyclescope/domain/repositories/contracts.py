@@ -34,6 +34,7 @@ from cyclescope.domain.entities.valuation import (
 from cyclescope.domain.entities.valuation_percentile import (
     ValuationPercentileResult,
 )
+from cyclescope.domain.entities.value_score import ValueScore
 from cyclescope.domain.value_objects.financial_data import (
     ConsolidationScope,
     FiscalPeriod,
@@ -468,3 +469,21 @@ class ValuationPercentileRepository(ABC):
         self, security_id: int, *, as_of: datetime | None = None
     ) -> list[ValuationPercentileResult]:
         """Read immutable snapshots optionally restricted by their cutoff."""
+
+
+class ValueScoreRepository(ABC):
+    """Append-only Value Score persistence contract."""
+
+    @abstractmethod
+    def create(self, result: ValueScore) -> ValueScore:
+        """Append a score snapshot; callers own the transaction."""
+
+    @abstractmethod
+    def get_by_id(self, result_id: int) -> ValueScore | None:
+        """Read one immutable Value Score snapshot."""
+
+    @abstractmethod
+    def list_by_security(
+        self, security_id: int, *, as_of: datetime | None = None
+    ) -> list[ValueScore]:
+        """Read immutable score snapshots optionally restricted by cutoff."""

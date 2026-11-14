@@ -48,3 +48,10 @@ Application's `MarketDataQualityAssessor` accepts Domain `DailyPrice`/`FxRate` r
 ### Historical valuation percentiles
 
 `CalculateHistoricalValuationPercentile` reads append-only Sprint 09 daily metric snapshots and Sprint 10 normalized earnings results. A cached normalized result is reusable only when its historical cutoff, metric, configuration, and complete financial and market source sets match the request/base snapshot. Otherwise it reuses `BuildValuationInputs` and `CalculateNormalizedEarnings` at that historical snapshot's own `as_of` and source policy; it never replays historical periods using today's revised statements. The Domain ECDF service applies daily deduplication, metric validity, currency/unit/period/version comparability, configured count thresholds, and expected trading-session coverage. A selected financial source must be the complete source set; mixed and missing source metadata is excluded with an audit reason, while unsupported multi-source combinations without selection are rejected. Infrastructure persists immutable percentile snapshots plus links to included and excluded valuation or normalized snapshots; same-date source-ineligible snapshots do not supersede eligible rows. A caller-owned transaction covers reconstructed Sprint 10 outputs and percentile results. See [HISTORICAL_VALUATION_PERCENTILE_SPEC.md](HISTORICAL_VALUATION_PERCENTILE_SPEC.md).
+# Value Score (Sprint 12)
+
+The Value Score application workflow composes the existing PIT valuation
+percentile and valuation-input use cases with Domain-owned score formulas. The
+Domain has no SQLAlchemy dependencies. Infrastructure persists immutable score
+snapshots through a create/read repository. See [VALUE_SCORE_SPEC.md](VALUE_SCORE_SPEC.md)
+for component formulas, provenance, and limitations.
