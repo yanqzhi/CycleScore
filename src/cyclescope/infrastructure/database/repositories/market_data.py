@@ -20,6 +20,12 @@ def _as_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
+def _query_cutoff(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise DomainValidationError("as_of must be timezone-aware.")
+    return value.astimezone(UTC)
+
+
 class SQLAlchemyDailyPriceRepository(DailyPriceRepository):
     """Append-only SQLAlchemy adapter for daily prices."""
 
@@ -74,7 +80,11 @@ class SQLAlchemyDailyPriceRepository(DailyPriceRepository):
                 DailyPriceModel.observation_date == observation_date,
                 DailyPriceModel.source_id == source_id,
             )
-            .order_by(DailyPriceModel.revision_number, DailyPriceModel.available_at)
+            .order_by(
+                DailyPriceModel.revision_number,
+                DailyPriceModel.available_at,
+                DailyPriceModel.id,
+            )
         )
         return [self._to_entity(row) for row in rows]
 
@@ -118,7 +128,7 @@ class SQLAlchemyDailyPriceRepository(DailyPriceRepository):
         source_id: int | None = None,
     ) -> list[DailyPrice]:
         """Return latest eligible revision per source/date in chronological order."""
-        cutoff = _as_utc(as_of)
+        cutoff = _query_cutoff(as_of)
         conditions = [
             DailyPriceModel.security_id == security_id,
             DailyPriceModel.observation_date >= period.start_date,
@@ -127,26 +137,33 @@ class SQLAlchemyDailyPriceRepository(DailyPriceRepository):
         ]
         if source_id is not None:
             conditions.append(DailyPriceModel.source_id == source_id)
+        ranked = (
+            select(
+                DailyPriceModel.id.label("record_id"),
+                func.row_number()
+                .over(
+                    partition_by=(
+                        DailyPriceModel.source_id,
+                        DailyPriceModel.observation_date,
+                    ),
+                    order_by=(
+                        DailyPriceModel.revision_number.desc(),
+                        DailyPriceModel.available_at.desc(),
+                        DailyPriceModel.id.desc(),
+                    ),
+                )
+                .label("revision_rank"),
+            )
+            .where(*conditions)
+            .subquery()
+        )
         rows = self._session.scalars(
             select(DailyPriceModel)
-            .where(*conditions)
-            .order_by(
-                DailyPriceModel.observation_date,
-                DailyPriceModel.source_id,
-                DailyPriceModel.revision_number.desc(),
-                DailyPriceModel.available_at.desc(),
-            )
+            .join(ranked, DailyPriceModel.id == ranked.c.record_id)
+            .where(ranked.c.revision_rank == 1)
+            .order_by(DailyPriceModel.observation_date, DailyPriceModel.source_id)
         )
-        latest: dict[tuple[date, int], DailyPriceModel] = {}
-        for row in rows:
-            latest.setdefault((row.observation_date, row.source_id), row)
-        return [
-            self._to_entity(row)
-            for row in sorted(
-                latest.values(),
-                key=lambda item: (item.observation_date, item.source_id),
-            )
-        ]
+        return [self._to_entity(row) for row in rows]
 
     def get_preceding_by_security(
         self,
@@ -159,7 +176,7 @@ class SQLAlchemyDailyPriceRepository(DailyPriceRepository):
     ) -> list[DailyPrice]:
         if limit_per_source < 1:
             raise DomainValidationError("Lookback limit must be positive.")
-        cutoff = _as_utc(as_of)
+        cutoff = _query_cutoff(as_of)
         conditions = [
             DailyPriceModel.security_id == security_id,
             DailyPriceModel.observation_date < start_date,
@@ -224,7 +241,22 @@ class SQLAlchemyDailyPriceRepository(DailyPriceRepository):
         self, security_id: int, as_of: datetime, source_id: int | None = None
     ) -> DailyPrice | None:
         """Return the newest eligible observation, excluding future market dates."""
-        cutoff = _as_utc(as_of)
+        candidates = self.get_latest_by_source(security_id, as_of, source_id)
+        return max(
+            candidates,
+            key=lambda row: (
+                row.observation_date,
+                row.available_at,
+                row.revision_number,
+                -row.source_id,
+            ),
+            default=None,
+        )
+
+    def get_latest_by_source(
+        self, security_id: int, as_of: datetime, source_id: int | None = None
+    ) -> list[DailyPrice]:
+        cutoff = _query_cutoff(as_of)
         conditions = [
             DailyPriceModel.security_id == security_id,
             DailyPriceModel.observation_date <= cutoff.date(),
@@ -232,32 +264,31 @@ class SQLAlchemyDailyPriceRepository(DailyPriceRepository):
         ]
         if source_id is not None:
             conditions.append(DailyPriceModel.source_id == source_id)
+        ranked = (
+            select(
+                DailyPriceModel.id.label("record_id"),
+                func.row_number()
+                .over(
+                    partition_by=DailyPriceModel.source_id,
+                    order_by=(
+                        DailyPriceModel.observation_date.desc(),
+                        DailyPriceModel.revision_number.desc(),
+                        DailyPriceModel.available_at.desc(),
+                        DailyPriceModel.id.desc(),
+                    ),
+                )
+                .label("source_rank"),
+            )
+            .where(*conditions)
+            .subquery()
+        )
         rows = self._session.scalars(
             select(DailyPriceModel)
-            .where(*conditions)
-            .order_by(
-                DailyPriceModel.observation_date.desc(),
-                DailyPriceModel.revision_number.desc(),
-                DailyPriceModel.available_at.desc(),
-                DailyPriceModel.source_id,
-            )
+            .join(ranked, DailyPriceModel.id == ranked.c.record_id)
+            .where(ranked.c.source_rank == 1)
+            .order_by(DailyPriceModel.source_id)
         )
-        candidates = list(rows)
-        if not candidates:
-            return None
-        best_by_source_date: dict[tuple[date, int], DailyPriceModel] = {}
-        for row in candidates:
-            best_by_source_date.setdefault((row.observation_date, row.source_id), row)
-        selected = max(
-            best_by_source_date.values(),
-            key=lambda row: (
-                row.observation_date,
-                row.available_at,
-                row.revision_number,
-                -row.source_id,
-            ),
-        )
-        return self._to_entity(selected)
+        return [self._to_entity(row) for row in rows]
 
 
 class SQLAlchemyFxRateRepository(FxRateRepository):
@@ -311,7 +342,11 @@ class SQLAlchemyFxRateRepository(FxRateRepository):
                 FxRateModel.observation_date == observation_date,
                 FxRateModel.source_id == source_id,
             )
-            .order_by(FxRateModel.revision_number, FxRateModel.available_at)
+            .order_by(
+                FxRateModel.revision_number,
+                FxRateModel.available_at,
+                FxRateModel.id,
+            )
         )
         return [self._to_entity(row) for row in rows]
 
@@ -348,7 +383,7 @@ class SQLAlchemyFxRateRepository(FxRateRepository):
         source_id: int | None = None,
     ) -> list[FxRate]:
         """Return latest eligible revision per source/date in chronological order."""
-        cutoff = _as_utc(as_of)
+        cutoff = _query_cutoff(as_of)
         conditions = [
             FxRateModel.base_currency == pair.base_currency,
             FxRateModel.quote_currency == pair.quote_currency,
@@ -358,26 +393,33 @@ class SQLAlchemyFxRateRepository(FxRateRepository):
         ]
         if source_id is not None:
             conditions.append(FxRateModel.source_id == source_id)
+        ranked = (
+            select(
+                FxRateModel.id.label("record_id"),
+                func.row_number()
+                .over(
+                    partition_by=(
+                        FxRateModel.source_id,
+                        FxRateModel.observation_date,
+                    ),
+                    order_by=(
+                        FxRateModel.revision_number.desc(),
+                        FxRateModel.available_at.desc(),
+                        FxRateModel.id.desc(),
+                    ),
+                )
+                .label("revision_rank"),
+            )
+            .where(*conditions)
+            .subquery()
+        )
         rows = self._session.scalars(
             select(FxRateModel)
-            .where(*conditions)
-            .order_by(
-                FxRateModel.observation_date,
-                FxRateModel.source_id,
-                FxRateModel.revision_number.desc(),
-                FxRateModel.available_at.desc(),
-            )
+            .join(ranked, FxRateModel.id == ranked.c.record_id)
+            .where(ranked.c.revision_rank == 1)
+            .order_by(FxRateModel.observation_date, FxRateModel.source_id)
         )
-        latest: dict[tuple[date, int], FxRateModel] = {}
-        for row in rows:
-            latest.setdefault((row.observation_date, row.source_id), row)
-        return [
-            self._to_entity(row)
-            for row in sorted(
-                latest.values(),
-                key=lambda item: (item.observation_date, item.source_id),
-            )
-        ]
+        return [self._to_entity(row) for row in rows]
 
     def get_preceding_by_pair(
         self,
@@ -390,7 +432,7 @@ class SQLAlchemyFxRateRepository(FxRateRepository):
     ) -> list[FxRate]:
         if limit_per_source < 1:
             raise DomainValidationError("Lookback limit must be positive.")
-        cutoff = _as_utc(as_of)
+        cutoff = _query_cutoff(as_of)
         conditions = [
             FxRateModel.base_currency == pair.base_currency,
             FxRateModel.quote_currency == pair.quote_currency,
@@ -456,7 +498,22 @@ class SQLAlchemyFxRateRepository(FxRateRepository):
         self, pair: CurrencyPair, as_of: datetime, source_id: int | None = None
     ) -> FxRate | None:
         """Return the newest eligible rate, excluding future observation dates."""
-        cutoff = _as_utc(as_of)
+        candidates = self.get_latest_by_source(pair, as_of, source_id)
+        return max(
+            candidates,
+            key=lambda row: (
+                row.observation_date,
+                row.available_at,
+                row.revision_number,
+                -row.source_id,
+            ),
+            default=None,
+        )
+
+    def get_latest_by_source(
+        self, pair: CurrencyPair, as_of: datetime, source_id: int | None = None
+    ) -> list[FxRate]:
+        cutoff = _query_cutoff(as_of)
         conditions = [
             FxRateModel.base_currency == pair.base_currency,
             FxRateModel.quote_currency == pair.quote_currency,
@@ -465,30 +522,28 @@ class SQLAlchemyFxRateRepository(FxRateRepository):
         ]
         if source_id is not None:
             conditions.append(FxRateModel.source_id == source_id)
-        rows = list(
-            self._session.scalars(
-                select(FxRateModel)
-                .where(*conditions)
-                .order_by(
-                    FxRateModel.observation_date.desc(),
-                    FxRateModel.revision_number.desc(),
-                    FxRateModel.available_at.desc(),
-                    FxRateModel.source_id,
+        ranked = (
+            select(
+                FxRateModel.id.label("record_id"),
+                func.row_number()
+                .over(
+                    partition_by=FxRateModel.source_id,
+                    order_by=(
+                        FxRateModel.observation_date.desc(),
+                        FxRateModel.revision_number.desc(),
+                        FxRateModel.available_at.desc(),
+                        FxRateModel.id.desc(),
+                    ),
                 )
+                .label("source_rank"),
             )
+            .where(*conditions)
+            .subquery()
         )
-        if not rows:
-            return None
-        latest: dict[tuple[date, int], FxRateModel] = {}
-        for row in rows:
-            latest.setdefault((row.observation_date, row.source_id), row)
-        selected = max(
-            latest.values(),
-            key=lambda row: (
-                row.observation_date,
-                row.available_at,
-                row.revision_number,
-                -row.source_id,
-            ),
+        rows = self._session.scalars(
+            select(FxRateModel)
+            .join(ranked, FxRateModel.id == ranked.c.record_id)
+            .where(ranked.c.source_rank == 1)
+            .order_by(FxRateModel.source_id)
         )
-        return self._to_entity(selected)
+        return [self._to_entity(row) for row in rows]

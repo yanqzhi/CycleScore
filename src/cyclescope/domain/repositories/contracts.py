@@ -145,7 +145,12 @@ class DailyPriceRepository(ABC):
         as_of: datetime,
         source_id: int | None = None,
     ) -> list[DailyPrice]:
-        """Return the latest available revision per source/date in date order."""
+        """Return eligible latest revisions per source/date, ordered by date/source.
+
+        Implementations must require aware ``as_of``, apply both
+        ``available_at <= as_of`` and ``observation_date <= UTC-date(as_of)``,
+        and choose the highest eligible revision for each source/date key.
+        """
 
     @abstractmethod
     def get_preceding_by_security(
@@ -157,13 +162,28 @@ class DailyPriceRepository(ABC):
         *,
         limit_per_source: int = 20,
     ) -> list[DailyPrice]:
-        """Return up to N latest eligible observations before start per source."""
+        """Return up to N latest eligible observations before start per source.
+
+        Availability, future-date, and revision-selection rules match the period query.
+        """
 
     @abstractmethod
     def get_latest_available(
         self, security_id: int, as_of: datetime, source_id: int | None = None
     ) -> DailyPrice | None:
-        """Return the newest observation that was available by ``as_of``."""
+        """Return one deterministic newest observation available by ``as_of``.
+
+        Use ``get_latest_by_source`` when results must preserve every source.
+        """
+
+    @abstractmethod
+    def get_latest_by_source(
+        self, security_id: int, as_of: datetime, source_id: int | None = None
+    ) -> list[DailyPrice]:
+        """Return one latest eligible observation for each selected source.
+
+        Availability, future-date, and revision-selection rules match the period query.
+        """
 
     @abstractmethod
     def exists(
@@ -197,7 +217,12 @@ class FxRateRepository(ABC):
         as_of: datetime,
         source_id: int | None = None,
     ) -> list[FxRate]:
-        """Return latest available revisions per source/date in date order."""
+        """Return eligible latest revisions per source/date, ordered by date/source.
+
+        Implementations must require aware ``as_of``, apply both
+        ``available_at <= as_of`` and ``observation_date <= UTC-date(as_of)``,
+        and choose the highest eligible revision for each source/date key.
+        """
 
     @abstractmethod
     def get_preceding_by_pair(
@@ -209,13 +234,28 @@ class FxRateRepository(ABC):
         *,
         limit_per_source: int = 20,
     ) -> list[FxRate]:
-        """Return up to N latest eligible rates before start per source."""
+        """Return up to N latest eligible rates before start per source.
+
+        Availability, future-date, and revision-selection rules match the period query.
+        """
 
     @abstractmethod
     def get_latest_available(
         self, pair: CurrencyPair, as_of: datetime, source_id: int | None = None
     ) -> FxRate | None:
-        """Return the newest rate observation available by ``as_of``."""
+        """Return one deterministic newest rate available by ``as_of``.
+
+        Use ``get_latest_by_source`` when results must preserve every source.
+        """
+
+    @abstractmethod
+    def get_latest_by_source(
+        self, pair: CurrencyPair, as_of: datetime, source_id: int | None = None
+    ) -> list[FxRate]:
+        """Return one latest eligible rate for each selected source.
+
+        Availability, future-date, and revision-selection rules match the period query.
+        """
 
     @abstractmethod
     def exists(

@@ -39,6 +39,8 @@ class MarketDataRevisionManagement:
         self, security_id: int, observation_date: date, source_id: int, as_of: datetime
     ) -> DailyPrice | None:
         cutoff = _utc(as_of)
+        if observation_date > cutoff.date():
+            return None
         rows = self.price_revisions(security_id, observation_date, source_id)
         eligible = [row for row in rows if row.available_at <= cutoff]
         return max(
@@ -55,6 +57,8 @@ class MarketDataRevisionManagement:
         as_of: datetime,
     ) -> FxRate | None:
         cutoff = _utc(as_of)
+        if observation_date > cutoff.date():
+            return None
         rows = self.fx_revisions(pair, observation_date, source_id)
         eligible = [row for row in rows if row.available_at <= cutoff]
         return max(

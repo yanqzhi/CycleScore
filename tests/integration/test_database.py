@@ -74,7 +74,7 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
             ).scalar_one()
-            == "0010_anomaly_optimistic_lock"
+            == "0011_market_data_access_indexes"
         )
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
         assert (
@@ -90,6 +90,15 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             if row[1] == "version_id"
         )
         assert version_column[3] == 1 and version_column[4] == "1"
+        price_indexes = {
+            row[1]
+            for row in connection.exec_driver_sql("PRAGMA index_list(daily_prices)")
+        }
+        fx_indexes = {
+            row[1] for row in connection.exec_driver_sql("PRAGMA index_list(fx_rates)")
+        }
+        assert "ix_daily_prices_security_source_date_asof_revision" in price_indexes
+        assert "ix_fx_rates_pair_source_date_asof_revision" in fx_indexes
     engine.dispose()
 
 

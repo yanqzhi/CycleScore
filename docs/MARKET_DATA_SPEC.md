@@ -18,7 +18,17 @@ Market observations are append-only. Importing a key that already exists increme
 
 Historical queries require an aware `as_of` timestamp. Rows with `available_at > as_of` are excluded. They also exclude observation dates after the UTC calendar date of `as_of`; this conservative rule prevents future observations when exchange timezone metadata is not yet part of the security master.
 
-The repository returns the highest eligible revision per observation date and source. When the application returns one series without a `source_id` filter, it selects one source per observation date by greatest `available_at`, then greatest revision number, then lowest source ID. Supplying a `source_id` selects that source specifically. Results are chronological.
+The repository returns the highest eligible revision per observation date and source. Queries without a `source_id` filter preserve one row for every source; they never merge or silently choose a preferred source. Supplying a `source_id` restricts results to that source. Results are chronological, with source ID as the deterministic secondary order.
+
+## Unified point-in-time access
+
+Application's `MarketDataAccess` facade exposes analogous typed queries for prices and FX: latest observations per source, inclusive period reads, preceding observations, date-specific as-of reads, and source-scoped revision history. Query DTOs validate positive IDs, date ranges, minimum counts, and aware cutoffs, then normalize cutoffs to UTC. Query responses carry the requested UTC `as_of`; observation entities provide date, source, revision, `available_at`, `collected_at`, and currency/pair without duplicating those fields in the wrapper.
+
+Every query excludes `available_at > as_of` and observation dates after the UTC date of `as_of`. Revisions are ranked within `(observation_date, source_id)` after the availability filter; the highest eligible revision wins, with availability timestamp and row ID as deterministic ties. `collected_at` never controls visibility. Revision-history requests require a source ID and return only revisions available at the requested cutoff. A date-specific query without a source returns one eligible revision for each source.
+
+Period responses include per-source retrieval summaries: latest eligible observation date and availability timestamp, number of selected observations in the requested period, and whether the period has data. `AVAILABLE` means the requested minimum observation count was met; `INSUFFICIENT_DATA` means some observations exist but the request's explicit minimum was not met; `NO_DATA` means no eligible observation exists in that period. These labels describe query results, not source health. If a source is explicitly selected but has no matching rows, the response still identifies that source with `NO_DATA`.
+
+Repositories use SQL window functions to rank eligible revisions before returning rows, avoiding materializing every revision in Python. The bounded preceding query returns at most the requested number of latest observations per source. Migration `0011_market_data_access_indexes` adds source-scoped indexes that include observation date, `available_at`, and revision number for price and FX queries; it retains the existing broader date indexes for unfiltered-source period reads.
 
 ## Provider boundary
 

@@ -48,6 +48,14 @@ class DailyPriceModel(TimestampMixin, Base):
         CheckConstraint("volume >= 0", name="volume_nonnegative"),
         CheckConstraint("revision_number >= 1", name="revision_positive"),
         Index("ix_daily_prices_security_date", "security_id", "observation_date"),
+        Index(
+            "ix_daily_prices_security_source_date_asof_revision",
+            "security_id",
+            "source_id",
+            "observation_date",
+            "available_at",
+            "revision_number",
+        ),
         Index("ix_daily_prices_observation_date", "observation_date"),
     )
 
@@ -99,6 +107,15 @@ class FxRateModel(TimestampMixin, Base):
             "base_currency",
             "quote_currency",
             "observation_date",
+        ),
+        Index(
+            "ix_fx_rates_pair_source_date_asof_revision",
+            "base_currency",
+            "quote_currency",
+            "source_id",
+            "observation_date",
+            "available_at",
+            "revision_number",
         ),
     )
 
