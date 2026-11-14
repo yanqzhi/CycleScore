@@ -28,6 +28,10 @@ from cyclescope.infrastructure.database.models.master_data import (
     SecurityModel,
     SubIndustryModel,
 )
+from cyclescope.infrastructure.database.models.normalized_earnings import (
+    NormalizedEarningsInputRefModel,
+    NormalizedEarningsResultModel,
+)
 from cyclescope.infrastructure.database.models.valuation import (
     HistoricalValuationMetricModel,
     ValuationMetricModel,
@@ -60,6 +64,8 @@ __all__ = [
     "ValuationMetricModel",
     "HistoricalValuationMetricModel",
     "ValuationSnapshotInputModel",
+    "NormalizedEarningsResultModel",
+    "NormalizedEarningsInputRefModel",
 ]
 
 from cyclescope.infrastructure.database.models.ingestion import (

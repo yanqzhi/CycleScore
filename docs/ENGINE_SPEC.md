@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the current analytical data contracts and future engine boundaries. Sprint 09 adds historical valuation data calculations; it does not implement Value Score, cycle analysis, screening, opportunity ranking, or backtesting.
+This document defines the current analytical data contracts and future engine boundaries. Sprint 09 adds historical valuation data calculations and Sprint 10 adds normalized historical earnings; neither implements Value Score, Cycle Score, screening, opportunity ranking, or backtesting.
 
 ## Data flow
 
@@ -34,3 +34,5 @@ An engine should inspect the corresponding quality report and open anomaly candi
 No analytical engine consumes quality reports yet. The weekday/holiday calendar is a configurable deterministic foundation, not a full exchange schedule. Price and FX outlier thresholds require market-specific calibration; corporate actions and venue changes can cause legitimate discontinuities. SQL-backed point-in-time queries use window ranking and source/date indexes; large requested date ranges still naturally return all matching observations. Financial statements are not part of this quality workflow.
 
 The valuation data foundation is defined in [VALUATION_SPEC.md](VALUATION_SPEC.md). It uses explicit PIT price and financial inputs and appends traceable metric snapshots. It does not calculate composite scores or percentiles. H1/9M cumulative statements, incompatible quarters, currency conversion, and incomplete TTM histories remain unavailable rather than being guessed or annualized.
+
+Normalized historical earnings use only eligible annual FY statements from the explicit `as_of` view. Coverage/confidence and peak/trough candidates are analytical metadata, not a cycle-stage score. Normalized PER and EV/EBITDA reuse the existing valuation formulas; see [NORMALIZED_EARNINGS_SPEC.md](NORMALIZED_EARNINGS_SPEC.md).

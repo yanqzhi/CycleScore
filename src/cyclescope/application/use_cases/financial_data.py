@@ -229,9 +229,14 @@ class GetFinancialStatements:
                 row.period_end,
             )
             old = latest.get(key)
-            if old is None or (row.revision_number, row.available_at) > (
+            if old is None or (
+                row.revision_number,
+                row.available_at,
+                row.id or 0,
+            ) > (
                 old.revision_number,
                 old.available_at,
+                old.id or 0,
             ):
                 latest[key] = row
         return [

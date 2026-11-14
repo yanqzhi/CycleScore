@@ -2,7 +2,7 @@
 
 ## Scope and boundaries
 
-Sprint 09 provides versioned metric definitions, PIT input assembly, Decimal calculations, and append-only historical snapshots. It is a data foundation, not a valuation score, earnings normalization engine, percentile model, screening system, or backtest engine. `BuildValuationInputs` reuses `GetFinancialStatements` and `MarketDataAccess`; it does not query SQLAlchemy models. The caller owns the transaction around input calculation and snapshot persistence.
+Sprint 09 provides versioned metric definitions, PIT input assembly, Decimal calculations, and append-only historical snapshots. Sprint 10's normalized earnings engine reuses these inputs and formulas for normalized PER and EV/EBITDA; this remains a foundation, not a valuation score, percentile model, screening system, or backtest engine. `BuildValuationInputs` reuses `GetFinancialStatements` and `MarketDataAccess`; it does not query SQLAlchemy models. The caller owns the transaction around input calculation and snapshot persistence.
 
 `FinancialItem` remains the one standardized financial taxonomy. The input assembler recognizes these item codes when configured in that existing master: `EPS`, `NET_INCOME`, `TOTAL_EQUITY`, `CASH_AND_CASH_EQUIVALENTS`, `SHORT_TERM_DEBT`, `LONG_TERM_DEBT`, `OPERATING_PROFIT`, `DEPRECIATION_AMORTIZATION`, `SHARES_OUTSTANDING`, and `WEIGHTED_AVERAGE_SHARES`. Source values are stored unchanged with their scale multiplier. Valuation calculations apply `scale_multiplier` to obtain the arithmetic amount; imports do not rewrite the reported value.
 

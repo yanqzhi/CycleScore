@@ -19,6 +19,10 @@ from cyclescope.domain.entities.fx_rate import FxRate
 from cyclescope.domain.entities.ingestion import IngestionRun, RawDataRecord
 from cyclescope.domain.entities.listing import Listing
 from cyclescope.domain.entities.listing_status_event import ListingStatusEvent
+from cyclescope.domain.entities.normalized_earnings import (
+    EarningsMetric,
+    NormalizedEarningsResult,
+)
 from cyclescope.domain.entities.security import Security
 from cyclescope.domain.entities.security_identifier import SecurityIdentifier
 from cyclescope.domain.entities.sub_industry import SubIndustry
@@ -420,3 +424,25 @@ class IngestionRunRepository(ABC):
 
     @abstractmethod
     def get_by_id(self, run_id: int) -> IngestionRun | None: ...
+
+
+class NormalizedEarningsRepository(ABC):
+    """Append-only normalized earnings result persistence contract."""
+
+    @abstractmethod
+    def create(self, result: NormalizedEarningsResult) -> NormalizedEarningsResult:
+        """Append a calculation and return it with a new identity."""
+
+    @abstractmethod
+    def get_by_id(self, result_id: int) -> NormalizedEarningsResult | None:
+        """Read one persisted normalized earnings calculation."""
+
+    @abstractmethod
+    def list_by_company(
+        self,
+        company_id: int,
+        *,
+        metric: EarningsMetric | None = None,
+        as_of: datetime | None = None,
+    ) -> list[NormalizedEarningsResult]:
+        """List calculations with optional metric and PIT cutoff filters."""

@@ -30,6 +30,7 @@ from cyclescope.application.dto.market_data_access import (
     PriceRevisionHistoryRequest,
     SourceDataAvailability,
 )
+from cyclescope.application.dto.normalized_earnings import NormalizedEarningsRequest
 from cyclescope.application.dto.valuation import (
     ValuationDateQuery,
     ValuationInputRequest,
@@ -70,4 +71,5 @@ __all__ = [
     "ValuationRangeQuery",
     "ValuationSnapshotQuery",
     "ValuationSnapshotResponse",
+    "NormalizedEarningsRequest",
 ]
