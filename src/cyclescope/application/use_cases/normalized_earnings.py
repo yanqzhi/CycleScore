@@ -7,12 +7,14 @@ from decimal import Decimal
 from cyclescope.application.dto.normalized_earnings import NormalizedEarningsRequest
 from cyclescope.application.use_cases.financial_data import GetFinancialStatements
 from cyclescope.domain.entities.normalized_earnings import (
+    DepreciationAmortizationSignConvention,
     EarningsInputReference,
     EarningsMetric,
     EarningsResultStatus,
     FiscalEarningsObservation,
     NormalizedEarningsResult,
     analyze_historical_earnings,
+    derive_ebitda,
 )
 from cyclescope.domain.entities.valuation import (
     ValuationInputReference,
@@ -145,9 +147,23 @@ class CalculateNormalizedEarnings:
                 )
                 records[(statement.fiscal_year, code)] = (value, reference)
 
+        eligible_fiscal_years = sorted(annual_statements)
+        if eligible_fiscal_years:
+            window_end = eligible_fiscal_years[-1]
+            window_start = max(
+                eligible_fiscal_years[0],
+                window_end - request.window_years + 1,
+            )
+            effective_window = window_end - window_start + 1
+        else:
+            window_start = None
+            window_end = None
+            effective_window = request.window_years
+
         observations: dict[EarningsMetric, list[FiscalEarningsObservation]] = {
             metric: [] for metric in EarningsMetric
         }
+        ebitda_issue = None
         for fiscal_year, statement in annual_statements.items():
             period_start = statement.period_start or statement.period_end
             for metric, code in _CODE_BY_METRIC.items():
@@ -165,16 +181,29 @@ class CalculateNormalizedEarnings:
                     )
             op = records.get((fiscal_year, "OPERATING_PROFIT"))
             da = records.get((fiscal_year, "DEPRECIATION_AMORTIZATION"))
-            if op is not None and da is not None:
-                observations[EarningsMetric.EBITDA].append(
-                    FiscalEarningsObservation(
-                        fiscal_year,
-                        op[0] + da[0],
-                        (op[1], da[1]),
-                        period_start,
-                        statement.period_end,
+            if (
+                op is not None
+                and da is not None
+                and window_start is not None
+                and window_end is not None
+                and window_start <= fiscal_year <= window_end
+            ):
+                try:
+                    ebitda_value = derive_ebitda(
+                        op[0], da[0], request.da_sign_convention
                     )
-                )
+                except DomainValidationError as exc:
+                    ebitda_issue = str(exc)
+                else:
+                    observations[EarningsMetric.EBITDA].append(
+                        FiscalEarningsObservation(
+                            fiscal_year,
+                            ebitda_value,
+                            (op[1], da[1]),
+                            period_start,
+                            statement.period_end,
+                        )
+                    )
 
         results = [
             analyze_historical_earnings(
@@ -185,9 +214,34 @@ class CalculateNormalizedEarnings:
                 window_years=request.window_years,
                 method=request.method,
                 as_of=cutoff,
+                window_start_fiscal_year=window_start,
+                window_end_fiscal_year=window_end,
+                effective_window_years=effective_window,
+                currency=next(
+                    (row.statement.reporting_currency for row in statements), None
+                ),
+                da_sign_convention=request.da_sign_convention,
             )
             for metric, rows in observations.items()
         ]
+        if ebitda_issue is not None or (
+            request.da_sign_convention == DepreciationAmortizationSignConvention.UNKNOWN
+        ):
+            reason = ebitda_issue or (
+                "D&A sign convention is unknown; EBITDA cannot be derived safely."
+            )
+            results = [
+                replace(
+                    result,
+                    status=EarningsResultStatus.UNAVAILABLE,
+                    status_reason=reason,
+                    normalized_value=None,
+                    assumptions=result.assumptions + (reason,),
+                )
+                if result.metric == EarningsMetric.EBITDA
+                else result
+                for result in results
+            ]
         results = self._calculate_normalized_valuations(results, request)
         return tuple(self._repository.create(result) for result in results)
 
@@ -229,18 +283,45 @@ class CalculateNormalizedEarnings:
                 output.append(result)
                 continue
             if result.status != EarningsResultStatus.AVAILABLE:
+                valuation_status = (
+                    ValuationResultStatus.UNAVAILABLE
+                    if result.status == EarningsResultStatus.UNAVAILABLE
+                    else ValuationResultStatus.INSUFFICIENT_DATA
+                )
                 output.append(
                     replace(
                         result,
-                        normalized_valuation_status=ValuationResultStatus.INSUFFICIENT_DATA,
-                        normalized_valuation_reason=(
-                            "Normalized earnings are insufficient for the ratio."
-                        ),
+                        normalized_valuation_status=valuation_status,
+                        normalized_valuation_reason=result.status_reason,
                         assumptions=result.assumptions
                         + (
                             "Normalized valuation could not be calculated because "
                             "normalized earnings are insufficient.",
                         ),
+                    )
+                )
+                continue
+            if result.currency is None or inputs.currency is None:
+                reason = (
+                    "Cannot validate normalized valuation currencies because "
+                    "historical or current currency metadata is missing."
+                )
+            elif result.currency != inputs.currency:
+                reason = (
+                    f"Historical earnings currency {result.currency} does not match "
+                    f"current valuation currency {inputs.currency}; currency "
+                    "conversion is not supported."
+                )
+            else:
+                reason = None
+            if reason is not None:
+                output.append(
+                    replace(
+                        result,
+                        normalized_valuation_status=ValuationResultStatus.INVALID_INPUT,
+                        normalized_valuation_reason=reason,
+                        normalized_valuation_value=None,
+                        valuation_input_references=(),
                     )
                 )
                 continue

@@ -31,7 +31,7 @@ Valuation calculations use shared point-in-time price and statement access, then
 
 ### Normalized earnings foundation
 
-`CalculateNormalizedEarnings` assembles source-scoped annual FY records through `GetFinancialStatements`, then delegates to a pure Domain analyzer. It computes historical statistics, coverage, confidence, and historical peak/trough candidates without using data unavailable at the requested cutoff. Normalized PER and EV/EBITDA reuse the existing valuation calculator. Infrastructure stores results and FK-backed source references append-only in migration `0013`; the caller owns commit and rollback. See [NORMALIZED_EARNINGS_SPEC.md](NORMALIZED_EARNINGS_SPEC.md).
+`CalculateNormalizedEarnings` assembles source-scoped annual FY records through `GetFinancialStatements`, then delegates to a pure Domain analyzer. One PIT-visible annual fiscal-year window is shared by all metrics, so missing latest-year facts reduce coverage instead of moving a metric's window. EBITDA requires a declared D&A sign convention. Normalized PER and EV/EBITDA reuse the existing valuation calculator and reject currency mismatches without conversion. Infrastructure stores currency/unit metadata, window bounds, convention, and FK-backed source references append-only through migrations `0013` and `0014`; the caller owns commit and rollback. See [NORMALIZED_EARNINGS_SPEC.md](NORMALIZED_EARNINGS_SPEC.md).
 
 ### Generic ingestion pipeline
 

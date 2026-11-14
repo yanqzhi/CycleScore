@@ -10,6 +10,7 @@ from cyclescope.application.use_cases.normalized_earnings import (
 )
 from cyclescope.domain.entities.financial_data import FinancialItem
 from cyclescope.domain.entities.normalized_earnings import (
+    DepreciationAmortizationSignConvention,
     EarningsMetric,
     NormalizationMethod,
 )
@@ -194,15 +195,17 @@ def test_normalized_earnings_are_pit_auditable_and_append_only(session):
     }
     statements = {}
     for year, (net_income, eps, op, da) in annual_values.items():
+        lines = {
+            "NET_INCOME": net_income,
+            "OPERATING_PROFIT": op,
+            "DEPRECIATION_AMORTIZATION": da,
+        }
+        if year != 2025:
+            lines["EPS"] = eps
         statements[year] = add_statement(
             year,
             source,
-            {
-                "NET_INCOME": net_income,
-                "EPS": eps,
-                "OPERATING_PROFIT": op,
-                "DEPRECIATION_AMORTIZATION": da,
-            },
+            lines,
         )
     add_statement(
         2024,
@@ -317,6 +320,7 @@ def test_normalized_earnings_are_pit_auditable_and_append_only(session):
         as_of=AS_OF,
         window_years=5,
         method=NormalizationMethod.ARITHMETIC_MEAN,
+        da_sign_convention=DepreciationAmortizationSignConvention.POSITIVE_EXPENSE,
         source_id=source.id,
         valuation_inputs=valuation_inputs,
     )
@@ -325,7 +329,7 @@ def test_normalized_earnings_are_pit_auditable_and_append_only(session):
     assert by_metric[EarningsMetric.NET_INCOME].normalized_value == Decimal("11")
     assert by_metric[EarningsMetric.NET_INCOME].loss_making_years == 1
     assert by_metric[EarningsMetric.NET_INCOME].data_coverage == Decimal("1")
-    assert by_metric[EarningsMetric.EPS].normalized_valuation_value == Decimal("100")
+    assert by_metric[EarningsMetric.EPS].normalized_valuation_value == Decimal("200")
     assert (
         by_metric[EarningsMetric.EPS].normalized_valuation_status.value == "AVAILABLE"
     )
@@ -342,12 +346,28 @@ def test_normalized_earnings_are_pit_auditable_and_append_only(session):
         by_metric[EarningsMetric.EPS].input_references[3].statement_id
         == statements[2024][0].id
     )
-    assert len(by_metric[EarningsMetric.EPS].valuation_input_references) == 6
+    assert by_metric[EarningsMetric.EPS].data_coverage == Decimal("0.8")
+    assert by_metric[EarningsMetric.EPS].window_end_fiscal_year == 2025
+    assert all(
+        ref.fiscal_year != 2025
+        for ref in by_metric[EarningsMetric.EPS].input_references
+    )
+    assert by_metric[EarningsMetric.EPS].currency == "USD"
+    assert by_metric[EarningsMetric.EPS].unit == UnitDimension.PER_SHARE
+    assert len(by_metric[EarningsMetric.EPS].valuation_input_references) == 5
     assert len(by_metric[EarningsMetric.EBITDA].valuation_input_references) == 15
 
     persisted = result_repo.get_by_id(by_metric[EarningsMetric.EPS].id or 0)
     assert persisted is not None
     assert persisted.input_references == by_metric[EarningsMetric.EPS].input_references
+    assert persisted.currency == "USD"
+    assert persisted.unit == UnitDimension.PER_SHARE
+    assert persisted.window_start_fiscal_year == 2021
+    assert persisted.window_end_fiscal_year == 2025
+    assert (
+        persisted.da_sign_convention
+        == DepreciationAmortizationSignConvention.POSITIVE_EXPENSE
+    )
     assert len(result_repo.list_by_company(company.id, metric=EarningsMetric.EPS)) == 1
     again = calculator.execute(request)
     assert again[0].id != calculated[0].id

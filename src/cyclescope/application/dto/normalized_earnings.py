@@ -3,7 +3,10 @@
 from dataclasses import dataclass
 from datetime import datetime
 
-from cyclescope.domain.entities.normalized_earnings import NormalizationMethod
+from cyclescope.domain.entities.normalized_earnings import (
+    DepreciationAmortizationSignConvention,
+    NormalizationMethod,
+)
 from cyclescope.domain.entities.valuation import ValuationInputs
 
 
@@ -13,6 +16,9 @@ class NormalizedEarningsRequest:
     as_of: datetime
     window_years: int
     method: NormalizationMethod
+    da_sign_convention: DepreciationAmortizationSignConvention = (
+        DepreciationAmortizationSignConvention.UNKNOWN
+    )
     source_id: int | None = None
     security_id: int | None = None
     valuation_inputs: ValuationInputs | None = None

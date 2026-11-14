@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cyclescope.domain.entities.normalized_earnings import (
+    DepreciationAmortizationSignConvention,
     EarningsConfidence,
     EarningsInputReference,
     EarningsMetric,
@@ -19,6 +20,7 @@ from cyclescope.domain.entities.valuation import (
     ValuationResultStatus,
 )
 from cyclescope.domain.repositories.contracts import NormalizedEarningsRepository
+from cyclescope.domain.value_objects.financial_data import UnitDimension
 from cyclescope.infrastructure.database.models.normalized_earnings import (
     NormalizedEarningsInputRefModel,
     NormalizedEarningsResultModel,
@@ -77,8 +79,12 @@ def _to_domain(row: NormalizedEarningsResultModel) -> NormalizedEarningsResult:
         security_id=row.security_id,
         metric=EarningsMetric(row.metric),
         method=NormalizationMethod(row.method),
+        currency=row.currency,
+        unit=UnitDimension(row.unit),
         requested_window_years=row.window_years,
         effective_window_years=row.effective_window_years,
+        window_start_fiscal_year=row.window_start_fiscal_year,
+        window_end_fiscal_year=row.window_end_fiscal_year,
         as_of=_utc(row.as_of),
         status=EarningsResultStatus(row.status),
         status_reason=row.status_reason,
@@ -103,6 +109,9 @@ def _to_domain(row: NormalizedEarningsResultModel) -> NormalizedEarningsResult:
         trough_candidate_year=row.trough_candidate_year,
         assumptions=tuple(row.assumptions),
         calculation_version=row.calculation_version,
+        da_sign_convention=DepreciationAmortizationSignConvention(
+            row.da_sign_convention
+        ),
         normalized_valuation_status=ValuationResultStatus(
             row.normalized_valuation_status
         )
@@ -127,8 +136,12 @@ class SQLAlchemyNormalizedEarningsRepository(NormalizedEarningsRepository):
             security_id=result.security_id,
             metric=result.metric.value,
             method=result.method.value,
+            currency=result.currency,
+            unit=result.unit.value,
             window_years=result.requested_window_years,
             effective_window_years=result.effective_window_years,
+            window_start_fiscal_year=result.window_start_fiscal_year,
+            window_end_fiscal_year=result.window_end_fiscal_year,
             as_of=result.as_of,
             status=result.status.value,
             status_reason=result.status_reason,
@@ -152,6 +165,7 @@ class SQLAlchemyNormalizedEarningsRepository(NormalizedEarningsRepository):
             trough_candidate_year=result.trough_candidate_year,
             assumptions=list(result.assumptions),
             calculation_version=result.calculation_version,
+            da_sign_convention=result.da_sign_convention.value,
             normalized_valuation_status=result.normalized_valuation_status.value
             if result.normalized_valuation_status
             else None,

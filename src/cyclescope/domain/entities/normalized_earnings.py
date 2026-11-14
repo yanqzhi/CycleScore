@@ -10,6 +10,7 @@ from cyclescope.domain.entities.valuation import (
     ValuationResultStatus,
 )
 from cyclescope.domain.exceptions import DomainValidationError
+from cyclescope.domain.value_objects.financial_data import UnitDimension
 
 
 class EarningsMetric(StrEnum):
@@ -35,6 +36,39 @@ class EarningsConfidence(StrEnum):
     MEDIUM = "MEDIUM"
     LOW = "LOW"
     INSUFFICIENT = "INSUFFICIENT"
+
+
+class DepreciationAmortizationSignConvention(StrEnum):
+    """How a source encodes D&A expense on its income statement."""
+
+    UNKNOWN = "UNKNOWN"
+    POSITIVE_EXPENSE = "POSITIVE_EXPENSE"
+    NEGATIVE_EXPENSE = "NEGATIVE_EXPENSE"
+
+
+def derive_ebitda(
+    operating_profit: Decimal,
+    depreciation_amortization: Decimal,
+    convention: DepreciationAmortizationSignConvention,
+) -> Decimal:
+    """Add back D&A only under a declared and internally consistent sign rule."""
+    if convention == DepreciationAmortizationSignConvention.UNKNOWN:
+        raise DomainValidationError(
+            "D&A sign convention is unknown; EBITDA cannot be derived safely."
+        )
+    if convention == DepreciationAmortizationSignConvention.POSITIVE_EXPENSE:
+        if depreciation_amortization < 0:
+            raise DomainValidationError(
+                "D&A is negative but the source convention declares positive expenses."
+            )
+        return operating_profit + depreciation_amortization
+    if convention == DepreciationAmortizationSignConvention.NEGATIVE_EXPENSE:
+        if depreciation_amortization > 0:
+            raise DomainValidationError(
+                "D&A is positive but the source convention declares negative expenses."
+            )
+        return operating_profit - depreciation_amortization
+    raise DomainValidationError("Unsupported D&A sign convention.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,8 +156,12 @@ class NormalizedEarningsResult:
     security_id: int | None
     metric: EarningsMetric
     method: NormalizationMethod
+    currency: str | None
+    unit: UnitDimension
     requested_window_years: int
     effective_window_years: int
+    window_start_fiscal_year: int | None
+    window_end_fiscal_year: int | None
     as_of: datetime
     status: EarningsResultStatus
     status_reason: str | None
@@ -144,6 +182,7 @@ class NormalizedEarningsResult:
     peak_candidate_year: int | None
     trough_candidate_year: int | None
     assumptions: tuple[str, ...]
+    da_sign_convention: DepreciationAmortizationSignConvention
     calculation_version: int = 1
     normalized_valuation_status: ValuationResultStatus | None = None
     normalized_valuation_reason: str | None = None
@@ -163,6 +202,31 @@ class NormalizedEarningsResult:
             raise DomainValidationError("Effective historical window is invalid.")
         if self.calculation_version < 1 or self.valid_fiscal_years < 0:
             raise DomainValidationError("Calculation version/year count is invalid.")
+        expected_unit = (
+            UnitDimension.PER_SHARE
+            if self.metric == EarningsMetric.EPS
+            else UnitDimension.CURRENCY_AMOUNT
+        )
+        if self.unit != expected_unit:
+            raise DomainValidationError(
+                "Normalized earnings unit conflicts with metric."
+            )
+        if self.currency is not None and (
+            len(self.currency) != 3
+            or not self.currency.isalpha()
+            or not self.currency.isupper()
+        ):
+            raise DomainValidationError("Currency must be a three-letter code.")
+        if (self.window_start_fiscal_year is None) != (
+            self.window_end_fiscal_year is None
+        ):
+            raise DomainValidationError("Fiscal-year window boundaries are incomplete.")
+        if (
+            self.window_start_fiscal_year is not None
+            and self.window_end_fiscal_year is not None
+            and self.window_start_fiscal_year > self.window_end_fiscal_year
+        ):
+            raise DomainValidationError("Fiscal-year window boundaries are invalid.")
         if self.as_of.tzinfo is None or self.as_of.utcoffset() is None:
             raise DomainValidationError("as_of must be timezone-aware.")
         object.__setattr__(self, "as_of", self.as_of.astimezone(UTC))
@@ -200,6 +264,13 @@ def analyze_historical_earnings(
     window_years: int,
     method: NormalizationMethod,
     as_of: datetime,
+    window_start_fiscal_year: int | None,
+    window_end_fiscal_year: int | None,
+    effective_window_years: int,
+    currency: str | None = None,
+    da_sign_convention: DepreciationAmortizationSignConvention = (
+        DepreciationAmortizationSignConvention.UNKNOWN
+    ),
     calculation_version: int = 1,
 ) -> NormalizedEarningsResult:
     """Analyze annual fiscal observations visible at one PIT cutoff.
@@ -218,20 +289,38 @@ def analyze_historical_earnings(
         if all(ref.available_at <= cutoff for ref in row.references)
         and row.period_end <= cutoff.date()
     )
-    latest_year = max((row.fiscal_year for row in eligible), default=None)
-    earliest_year = min((row.fiscal_year for row in eligible), default=None)
-    effective = (
-        min(window_years, latest_year - earliest_year + 1)
-        if latest_year is not None and earliest_year is not None
-        else window_years
-    )
-    start_year = latest_year - effective + 1 if latest_year is not None else 1
+    if not 1 <= effective_window_years <= window_years:
+        raise DomainValidationError("Effective historical window is invalid.")
+    if (window_start_fiscal_year is None) != (window_end_fiscal_year is None):
+        raise DomainValidationError("Fiscal-year window boundaries are incomplete.")
+    if window_start_fiscal_year is None:
+        if effective_window_years != window_years:
+            raise DomainValidationError(
+                "A shortened historical window requires fiscal-year boundaries."
+            )
+        start_year = None
+        end_year = None
+    else:
+        assert window_end_fiscal_year is not None
+        if window_start_fiscal_year > window_end_fiscal_year:
+            raise DomainValidationError("Fiscal-year window boundaries are invalid.")
+        if (
+            window_end_fiscal_year - window_start_fiscal_year + 1
+            != effective_window_years
+        ):
+            raise DomainValidationError(
+                "Fiscal-year boundaries do not match the window length."
+            )
+        start_year = window_start_fiscal_year
+        end_year = window_end_fiscal_year
     selected = tuple(
         sorted(
             (
                 row
                 for row in eligible
-                if start_year <= row.fiscal_year <= (latest_year or 0)
+                if start_year is not None
+                and end_year is not None
+                and start_year <= row.fiscal_year <= end_year
             ),
             key=lambda row: row.fiscal_year,
         )
@@ -244,6 +333,7 @@ def analyze_historical_earnings(
         )
     values = [row.value for row in selected]
     count = len(values)
+    effective = effective_window_years
     coverage = (
         (Decimal(count) / Decimal(effective)).quantize(
             Decimal("0.0000001"), rounding=ROUND_HALF_EVEN
@@ -259,15 +349,15 @@ def analyze_historical_earnings(
             mean_exact = sum(values, Decimal(0)) / count
             mean = _q(mean_exact)
     ordered = sorted(values)
-    median = (
-        (
-            ordered[count // 2]
-            if count % 2
-            else (ordered[count // 2 - 1] + ordered[count // 2]) / Decimal(2)
-        )
-        if count
-        else None
-    )
+    median = None
+    if count:
+        with localcontext() as context:
+            context.prec = 50
+            median = (
+                ordered[count // 2]
+                if count % 2
+                else (ordered[count // 2 - 1] + ordered[count // 2]) / Decimal(2)
+            )
     if median is not None:
         median = _q(median)
     minimum, maximum = (min(values), max(values)) if values else (None, None)
@@ -305,8 +395,16 @@ def analyze_historical_earnings(
         security_id=security_id,
         metric=metric,
         method=method,
+        currency=currency,
+        unit=(
+            UnitDimension.PER_SHARE
+            if metric == EarningsMetric.EPS
+            else UnitDimension.CURRENCY_AMOUNT
+        ),
         requested_window_years=window_years,
-        effective_window_years=effective,
+        effective_window_years=effective_window_years,
+        window_start_fiscal_year=window_start_fiscal_year,
+        window_end_fiscal_year=window_end_fiscal_year,
         as_of=cutoff,
         status=status,
         status_reason=(
@@ -346,6 +444,7 @@ def analyze_historical_earnings(
             "Peak and trough years are historical earnings extrema, not definitive "
             "cycle-stage labels.",
         ),
+        da_sign_convention=da_sign_convention,
         calculation_version=calculation_version,
     )
 

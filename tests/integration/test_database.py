@@ -97,7 +97,7 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
             ).scalar_one()
-            == "0013_normalized_earnings"
+            == "0014_normalized_earnings_currency_windows"
         )
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
         assert (

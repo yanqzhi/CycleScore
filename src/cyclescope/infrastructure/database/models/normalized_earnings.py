@@ -32,6 +32,14 @@ class NormalizedEarningsResultModel(TimestampMixin, Base):
             name="metric",
         ),
         CheckConstraint("method IN ('ARITHMETIC_MEAN','MEDIAN')", name="method"),
+        CheckConstraint("unit IN ('CURRENCY_AMOUNT','PER_SHARE')", name="unit"),
+        CheckConstraint(
+            "currency IS NULL OR length(currency) = 3", name="currency_code"
+        ),
+        CheckConstraint(
+            "da_sign_convention IN ('UNKNOWN','POSITIVE_EXPENSE','NEGATIVE_EXPENSE')",
+            name="da_sign_convention",
+        ),
         CheckConstraint(
             "confidence IN ('HIGH','MEDIUM','LOW','INSUFFICIENT')",
             name="confidence",
@@ -75,8 +83,12 @@ class NormalizedEarningsResultModel(TimestampMixin, Base):
     )
     metric: Mapped[str] = mapped_column(String(32), nullable=False)
     method: Mapped[str] = mapped_column(String(32), nullable=False)
+    currency: Mapped[str | None] = mapped_column(String(3))
+    unit: Mapped[str] = mapped_column(String(24), nullable=False)
     window_years: Mapped[int] = mapped_column(nullable=False)
     effective_window_years: Mapped[int] = mapped_column(nullable=False)
+    window_start_fiscal_year: Mapped[int | None] = mapped_column()
+    window_end_fiscal_year: Mapped[int | None] = mapped_column()
     as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     status_reason: Mapped[str | None] = mapped_column(String(1000))
@@ -99,6 +111,7 @@ class NormalizedEarningsResultModel(TimestampMixin, Base):
     trough_candidate_year: Mapped[int | None] = mapped_column()
     assumptions: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     calculation_version: Mapped[int] = mapped_column(nullable=False)
+    da_sign_convention: Mapped[str] = mapped_column(String(24), nullable=False)
     normalized_valuation_status: Mapped[str | None] = mapped_column(String(24))
     normalized_valuation_reason: Mapped[str | None] = mapped_column(String(1000))
     normalized_valuation_value: Mapped[Decimal | None] = mapped_column(Numeric(38, 12))
