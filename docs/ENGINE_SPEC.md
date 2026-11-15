@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the current analytical data contracts and future engine boundaries. Sprint 09 adds historical valuation data calculations and Sprint 10 adds normalized historical earnings; neither implements Value Score, Cycle Score, screening, opportunity ranking, or backtesting.
+This document defines the current analytical data contracts and engine boundaries. Sprint 09 adds historical valuation calculations, Sprint 10 adds normalized historical earnings, Sprint 12 adds Value Score, and Sprint 13 adds an earnings-only Cycle Score proxy. Opportunity ranking, screening, and backtesting are not implemented.
 
 ## Data flow
 
@@ -23,6 +23,8 @@ flowchart LR
     Earnings[(PIT normalized earnings)] --> Percentile
     Calendar --> Percentile
     Percentile --> PercentileSnapshots[(Append-only percentile snapshots)]
+    Earnings --> Cycle[CalculateCycleScore]
+    Cycle --> CycleSnapshots[(Append-only Cycle Score snapshots)]
 ```
 
 ## Consumption requirements
@@ -31,13 +33,26 @@ An engine must select a source deliberately and pass an explicit UTC-aware `as_o
 
 Period-read responses can also include retrieval status by source. `AVAILABLE`, `INSUFFICIENT_DATA`, and `NO_DATA` reflect only the number of eligible observations in the requested period relative to an explicit minimum; they are not source-health assertions. Latest observation details remain point-in-time filtered.
 
-An engine should inspect the corresponding quality report and open anomaly candidates for its security/pair and date range. `INSUFFICIENT_DATA` or `NOT_APPLICABLE` reports do not have a numeric quality score. A numeric quality score is separate from any future Value Score, Cycle Score, or Opportunity Score. Outliers are candidates for review and never mean that data was automatically corrected or proven erroneous.
+An engine may inspect the corresponding quality report and open anomaly candidates for its security/pair and date range. `INSUFFICIENT_DATA` or `NOT_APPLICABLE` reports do not have a numeric quality score. A numeric quality score is separate from Value Score and Cycle Score. Outliers are candidates for review and never mean that data was automatically corrected or proven erroneous.
 
 ## Current limitations
 
 No analytical engine consumes quality reports yet. The weekday/holiday calendar is a configurable deterministic foundation, not a full exchange schedule. Price and FX outlier thresholds require market-specific calibration; corporate actions and venue changes can cause legitimate discontinuities. SQL-backed point-in-time queries use window ranking and source/date indexes; large requested date ranges still naturally return all matching observations. Financial statements are not part of this quality workflow.
 
 The valuation data foundation is defined in [VALUATION_SPEC.md](VALUATION_SPEC.md). It uses explicit PIT price and financial inputs and appends traceable metric snapshots. Sprint 11 adds historical ECDF percentile comparisons for PER, PBR, EV/EBITDA, normalized PER, and normalized EV/EBITDA; these are individual metrics, not composite scores. H1/9M cumulative statements, incompatible quarters, currency conversion, and incomplete TTM histories remain unavailable rather than being guessed or annualized.
+
+## Cycle Score (Earnings Cycle v1)
+
+`CalculateCycleScore` reuses the normalized earnings use case at the exact
+requested PIT cutoff and analyzes its annual FY operating-profit observations.
+It scores normalized momentum, acceleration, historical position/phase, and
+recent trend confirmation with a versioned configuration. Missing fiscal years
+remain missing and reduce coverage. A low earnings position alone cannot
+confirm a trough; a trough requires observed stabilization and positive
+acceleration. Persisted snapshots retain source/revision references and are
+append-only. This is a company earnings-cycle proxy, not a complete industry
+cycle assessment; inventory, supply-demand, commodity, and capacity signals
+remain future extensions. See [CYCLE_SCORE_SPEC.md](CYCLE_SCORE_SPEC.md).
 
 Normalized historical earnings use only eligible annual FY statements from the explicit `as_of` view. Coverage/confidence and peak/trough candidates are analytical metadata, not a cycle-stage score. Normalized PER and EV/EBITDA reuse the existing valuation formulas; see [NORMALIZED_EARNINGS_SPEC.md](NORMALIZED_EARNINGS_SPEC.md).
 

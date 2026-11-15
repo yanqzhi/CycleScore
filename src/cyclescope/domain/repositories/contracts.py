@@ -6,6 +6,7 @@ from datetime import date, datetime
 from cyclescope.domain.entities import Industry
 from cyclescope.domain.entities.company import Company
 from cyclescope.domain.entities.company_industry_exposure import CompanyIndustryExposure
+from cyclescope.domain.entities.cycle_score import CycleScore
 from cyclescope.domain.entities.daily_price import DailyPrice
 from cyclescope.domain.entities.data_source import DataSource
 from cyclescope.domain.entities.exchange import Exchange
@@ -487,3 +488,21 @@ class ValueScoreRepository(ABC):
         self, security_id: int, *, as_of: datetime | None = None
     ) -> list[ValueScore]:
         """Read immutable score snapshots optionally restricted by cutoff."""
+
+
+class CycleScoreRepository(ABC):
+    """Append-only Cycle Score persistence contract."""
+
+    @abstractmethod
+    def create(self, result: CycleScore) -> CycleScore:
+        """Append one Cycle Score snapshot; caller owns the transaction."""
+
+    @abstractmethod
+    def get_by_id(self, result_id: int) -> CycleScore | None:
+        """Read one immutable Cycle Score snapshot."""
+
+    @abstractmethod
+    def list_by_company(
+        self, company_id: int, *, as_of: datetime | None = None
+    ) -> list[CycleScore]:
+        """Read immutable company snapshots optionally restricted by cutoff."""

@@ -2,6 +2,18 @@
 
 from cyclescope.domain.entities.company import Company
 from cyclescope.domain.entities.company_industry_exposure import CompanyIndustryExposure
+from cyclescope.domain.entities.cycle_score import (
+    CyclePhase,
+    CycleScore,
+    CycleScoreComponent,
+    CycleScoreComponentCode,
+    CycleScoreComponentStatus,
+    CycleScoreConfidence,
+    CycleScoreConfig,
+    CycleScoreInputReference,
+    CycleScoreObservation,
+    CycleScoreStatus,
+)
 from cyclescope.domain.entities.daily_price import DailyPrice
 from cyclescope.domain.entities.data_quality import DataAnomaly, DataQualityReport
 from cyclescope.domain.entities.data_source import DataSource
@@ -60,6 +72,16 @@ from cyclescope.domain.entities.value_score import (
 __all__ = [
     "Company",
     "CompanyIndustryExposure",
+    "CyclePhase",
+    "CycleScore",
+    "CycleScoreComponent",
+    "CycleScoreComponentCode",
+    "CycleScoreComponentStatus",
+    "CycleScoreConfidence",
+    "CycleScoreConfig",
+    "CycleScoreInputReference",
+    "CycleScoreObservation",
+    "CycleScoreStatus",
     "DailyPrice",
     "DataSource",
     "DataAnomaly",

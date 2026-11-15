@@ -1,6 +1,6 @@
 # CycleScope
 
-CycleScope is an independent Python application for cyclical-stock intelligence. It includes a multi-market issuer, security, exchange, identifier, and listing master, company industry exposures, and provider-independent infrastructure for importing and retrieving daily OHLCV prices and FX rates. Live provider integrations and analytical engines are not implemented.
+CycleScope is an independent Python application for cyclical-stock intelligence. It includes multi-market issuer and security masters, provider-independent market-data ingestion, point-in-time financial and valuation foundations, Value Score, and an earnings-cycle v1 proxy. Live market providers, complete industry-cycle analysis, and investment recommendation features are not implemented.
 
 ## Architecture
 
@@ -91,7 +91,17 @@ mypy src
 
 More workflow details are in [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md).
 
-CycleScore now includes a provider-neutral financial statement foundation for BS, PL, and CF data. It stores source-specific revisions with point-in-time availability, standardized item definitions, and source item mappings. See [Financial Data Specification](docs/FINANCIAL_DATA_SPEC.md). No live provider or analysis engine is included.
+CycleScore includes a provider-neutral financial statement foundation for BS, PL, and CF data. It stores source-specific revisions with point-in-time availability, standardized item definitions, and source item mappings. See [Financial Data Specification](docs/FINANCIAL_DATA_SPEC.md).
+
+## Earnings Cycle Score
+
+The Cycle Score v1 engine analyzes point-in-time annual operating-profit
+observations to estimate earnings recovery, expansion, peak, contraction, or a
+confirmed trough zone. It is separate from Value Score and is an earnings-cycle
+proxy, not a complete industry-cycle model. It does not yet analyze inventory,
+supply and demand, commodity prices, or capacity clearing. See
+[CYCLE_SCORE_SPEC.md](docs/CYCLE_SCORE_SPEC.md) for formulas, phase rules,
+coverage, provenance, and limitations.
 
 ## Generic ingestion pipeline
 

@@ -98,7 +98,7 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
             ).scalar_one()
-            == "0016_value_scores"
+            == "0017_cycle_scores"
         )
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
         assert (
@@ -190,6 +190,42 @@ def test_value_score_migration_downgrade_and_upgrade_are_safe(
             "valuation_percentile_inputs",
         }
     check_engine.dispose()
+
+
+def test_cycle_score_migration_downgrade_and_upgrade_are_safe(
+    tmp_path: object,
+) -> None:
+    database_path = tmp_path / "cycle_score_migration.db"  # type: ignore[operator]
+    config = Config(str(Path.cwd() / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "head")
+    engine = create_database_engine(f"sqlite:///{database_path}")
+    with engine.connect() as connection:
+        assert "cycle_scores" in inspect(connection).get_table_names()
+        columns = {
+            column["name"] for column in inspect(connection).get_columns("cycle_scores")
+        }
+        assert {
+            "company_id",
+            "security_id",
+            "as_of",
+            "score",
+            "phase",
+            "coverage",
+            "normalized_earnings_result_id",
+            "config_snapshot",
+            "components",
+            "input_references",
+        } <= columns
+    command.downgrade(config, "0016_value_scores")
+    with engine.connect() as connection:
+        assert "cycle_scores" not in inspect(connection).get_table_names()
+        assert "value_scores" in inspect(connection).get_table_names()
+        assert "normalized_earnings_results" in inspect(connection).get_table_names()
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        assert "cycle_scores" in inspect(connection).get_table_names()
+    engine.dispose()
 
 
 def test_repository_crud(session: Session) -> None:

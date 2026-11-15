@@ -1,5 +1,6 @@
 """Database model declarations."""
 
+from cyclescope.infrastructure.database.models.cycle_score import CycleScoreModel
 from cyclescope.infrastructure.database.models.data_quality import (
     DataAnomalyLifecycleEventModel,
     DataAnomalyModel,
@@ -74,6 +75,7 @@ __all__ = [
     "ValuationPercentileResultModel",
     "ValuationPercentileInputModel",
     "ValueScoreModel",
+    "CycleScoreModel",
 ]
 
 from cyclescope.infrastructure.database.models.ingestion import (

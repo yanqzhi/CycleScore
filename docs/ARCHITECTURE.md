@@ -2,12 +2,12 @@
 
 CycleScope is a modular monolith packaged under `src/cyclescope`.
 
-- `domain` contains framework-independent company, security, exchange, identifier, listing, exposure, and market-data entities, value objects, validation exceptions, and repository contracts.
-- `application` contains typed company/security/exchange/listing/identifier/exposure use cases, shared exposure validation, market-data import/retrieval use cases, DTOs, and provider ports.
+- `domain` contains framework-independent company, security, exchange, identifier, listing, exposure, market-data, valuation, Value Score, and Cycle Score entities/services, value objects, validation exceptions, and repository contracts.
+- `application` contains typed master-data, market-data, financial-data, valuation, Value Score, and Cycle Score use cases, DTOs, and provider/repository ports.
 - `infrastructure/config` loads validated Pydantic Settings. `infrastructure/logging` configures standard-library console and rotating-file handlers.
 - `infrastructure/database` contains SQLAlchemy mappings, engine/session setup, Alembic migrations, and master-data and market-data repository adapters.
 - `infrastructure/market_data` contains input adapters, including the CSV adapter. Providers implement Application acquisition ports and map their source data into common DTOs without changing domain entities or use cases.
-- `engines` and `presentation` are placeholders for later sprints.
+- `engines` and `presentation` remain extension points; current score calculation rules live in Domain services and orchestration lives in Application.
 
 Dependencies point inward: adapters depend on domain contracts, while domain types do not import database, UI, data-frame, or provider libraries. Session and engine factories are passed explicitly. Repository contracts use concrete domain entity types, and adapters explicitly map between SQLAlchemy rows and those entities. ORM models and persistence mappings stay inside Infrastructure.
 
@@ -43,7 +43,7 @@ Application's `MarketDataQualityAssessor` accepts Domain `DailyPrice`/`FxRate` r
 
 ### Valuation data foundation
 
-`BuildValuationInputs` composes the existing `GetFinancialStatements` and `MarketDataAccess` use cases and maps standardized `FinancialItem` rows into validated Domain inputs. A single aware cutoff controls both repositories; source and revision provenance is preserved. Domain services calculate versioned PER, PBR, EPS, BVPS, market capitalization, enterprise value, EBITDA, and EV/EBITDA from Decimal values. Historical snapshots use SQLAlchemy adapters and an additive migration; line-level source references have foreign keys and publication/availability metadata. Application has typed input and historical snapshot query DTOs. See [VALUATION_SPEC.md](VALUATION_SPEC.md). No scoring or ranking engine is included.
+`BuildValuationInputs` composes the existing `GetFinancialStatements` and `MarketDataAccess` use cases and maps standardized `FinancialItem` rows into validated Domain inputs. A single aware cutoff controls both repositories; source and revision provenance is preserved. Domain services calculate versioned PER, PBR, EPS, BVPS, market capitalization, enterprise value, EBITDA, and EV/EBITDA from Decimal values. Historical snapshots use SQLAlchemy adapters and an additive migration; line-level source references have foreign keys and publication/availability metadata. Application has typed input and historical snapshot query DTOs. The valuation foundation itself is not a composite score or ranking engine. See [VALUATION_SPEC.md](VALUATION_SPEC.md).
 
 ### Historical valuation percentiles
 
@@ -62,3 +62,22 @@ The Value Score workflow does not convert `DomainValidationError` into a partial
 result; source/PIT integrity failures propagate before persistence. See
 `VALUE_SCORE_SPEC.md` for the deterministic peer-source cohort policy and
 legacy coverage behavior.
+
+# Cycle Score (Sprint 13)
+
+`CalculateCycleScore` delegates PIT annual FY statement selection and
+normalization to the existing `CalculateNormalizedEarnings` use case, then
+passes the persisted `OPERATING_PROFIT.fiscal_year_values` and their statement
+references to a framework-independent Domain analyzer. It does not treat the
+normalized mean as an extra annual observation. Source selection, accounting
+standard, consolidation scope, currency, FY period, availability, and revision
+rules are validated before calculation. No input line or ORM model leaks into
+Domain/Application from Infrastructure.
+
+The Infrastructure repository appends a Cycle Score snapshot with its exact
+versioned config, phase, coverage/confidence, components, and financial line
+provenance. It has no update/delete or commit operation. The caller's transaction
+covers both normalized earnings snapshots generated at the requested historical
+cutoff and the Cycle Score row. Sprint 13 is an earnings-cycle proxy only; it
+does not infer complete industry cycles from revenue exposure. See
+`CYCLE_SCORE_SPEC.md`.

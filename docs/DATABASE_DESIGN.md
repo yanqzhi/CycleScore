@@ -17,6 +17,7 @@ All tables use integer primary keys and UTC `created_at` / `updated_at` timestam
 | `data_sources` | Provider metadata only; no API credentials. Unique code. |
 | `daily_prices` | Security and source FKs (`RESTRICT`); decimal OHLC and adjusted close; integer volume; observation/publication dates; availability and collection timestamps; revision. Unique security/date/source/revision. |
 | `fx_rates` | Source FK (`RESTRICT`); decimal quote-per-base rate; currency pair; observation/publication dates; availability and collection timestamps; revision. Unique pair/date/source/revision. |
+| `cycle_scores` | Append-only company and optional Security snapshots with PIT cutoff, score/phase/coverage/confidence, source/currency, normalized-result FK, versioned configuration, component JSON, and exact annual statement input references. |
 
 SQLite foreign-key enforcement is enabled on every connection. Alembic owns schema changes; initialization upgrades to `head` and inserts missing initial industries without overwriting existing rows. No market time-series tables are included in Sprint 01.
 
@@ -44,6 +45,18 @@ Migration `0015_valuation_percentiles` adds append-only `valuation_percentile_re
 Migration `0013_normalized_earnings` adds append-only `normalized_earnings_results` and `normalized_earnings_input_refs`. Results reference Company and optional Security; input references are foreign-keyed to source, financial statement and statement line, or the exact daily-price row. Decimal statistics and normalized valuation values use `NUMERIC(38, 12)`. No uniqueness rule blocks a recalculation from creating another historical result. See [NORMALIZED_EARNINGS_SPEC.md](NORMALIZED_EARNINGS_SPEC.md).
 
 Migration `0014_normalized_earnings_currency_windows` adds persisted currency and unit metadata, the common fiscal-year window bounds, and the D&A sign convention to normalized earnings results. Existing rows are retained; EPS rows are backfilled with `PER_SHARE`, other metrics with `CURRENCY_AMOUNT`, currencies remain unknown (`NULL`), and legacy D&A conventions are `UNKNOWN`. New schema changes are additive and preserve append-only result history.
+
+# Cycle Score snapshots (Sprint 13)
+
+Migration `0017_cycle_scores` adds one append-only `cycle_scores` table. It
+references the company, optional security, selected financial source, and exact
+normalized operating-profit result with RESTRICT semantics. The config, four
+component assessments, and statement-line audit references are stored as JSON
+so the complete point-in-time calculation can be read back without update or
+delete APIs. The caller owns the transaction, which also includes normalized
+earnings results created for the calculation. Downgrade removes only the Cycle
+Score table and its indexes; it leaves all financial statements and normalized
+earnings history intact. See [CYCLE_SCORE_SPEC.md](CYCLE_SCORE_SPEC.md).
 # Value Score snapshots (Sprint 12)
 
 Migration `0016_value_scores` adds an append-only `value_scores` table. Each row

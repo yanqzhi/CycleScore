@@ -2,7 +2,7 @@
 
 ## Scope and boundaries
 
-Sprint 10 adds a point-in-time historical earnings analyzer and an append-only result store. It does not implement Value Score, Cycle Score, opportunity ranking, screening, or backtesting. `CalculateNormalizedEarnings` reuses `GetFinancialStatements` and `FinancialItemRepository`; normalized PER and EV/EBITDA delegate arithmetic and applicability rules to the existing valuation calculator. The caller owns the transaction.
+Sprint 10 adds a point-in-time historical earnings analyzer and an append-only result store. Its annual FY outputs are reused by the Sprint 13 earnings-cycle proxy; it does not implement complete industry-cycle analysis, opportunity ranking, screening, or backtesting. `CalculateNormalizedEarnings` reuses `GetFinancialStatements` and `FinancialItemRepository`; normalized PER and EV/EBITDA delegate arithmetic and applicability rules to the existing valuation calculator. The caller owns the transaction.
 
 The analyzer supports annual FY observations of `OPERATING_PROFIT`, `NET_INCOME`, and reported `EPS`. EBITDA is derived per fiscal year from operating profit and depreciation and amortization (D&A) only when the source sign convention is explicitly configured. For `POSITIVE_EXPENSE`, EBITDA = operating profit + D&A; for `NEGATIVE_EXPENSE`, EBITDA = operating profit - D&A. An unknown convention, or a value inconsistent with its declared convention, makes EBITDA unavailable with a reason; the application never guesses or silently flips signs. EPS is not synthesized when the annual EPS item is missing. No financial item taxonomy is duplicated.
 
