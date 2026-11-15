@@ -116,3 +116,14 @@ region and relationship IDs. `CONTAINS` edges alone participate in geographic
 hierarchy traversal and cycle detection. `MEMBER_OF` links countries to
 economic/market regions and is queried separately. Downgrade refuses to remove
 the new contract if `MEMBER_OF` rows remain, avoiding silent data loss.
+
+## Industry Signal Aggregates (Sprint 17)
+
+Migration `0023_industry_signal_aggregates` adds append-only aggregate snapshots
+and contributor provenance. The snapshot stores explicit policy/calculation
+versions, source and region scope, PIT cutoff, status, value, and coverage;
+contributor rows preserve the original observation, source, revision, region,
+availability/publication metadata, value, and classification references.
+Foreign keys use RESTRICT. The repository flushes parent and contributors in the
+caller-owned transaction and exposes no update/delete contract. Downgrade drops
+only these new tables. See `INDUSTRY_SIGNAL_AGGREGATION_SPEC.md`.

@@ -119,3 +119,14 @@ economic/market regions). Only containment edges are traversed for ancestry and
 checked for cycles; membership is queried separately and never triggers
 aggregation. Repositories flush only; callers own transaction boundaries. See
 `CLASSIFICATION_MASTER_SPEC.md` and `REGION_MASTER_SPEC.md`.
+
+# Industry Signal Aggregation (Sprint 17)
+
+The application workflow acquires normalized Domain observations through the
+existing point-in-time `GetIndustrySignals` query. Versioned Domain policies
+validate source, units, currency, periods, classification provenance, and
+explicit Region Master scopes before calculating sums or capacity-weighted
+utilization. Infrastructure persists append-only snapshots and exact input
+contributors; transaction ownership remains with the caller. `CONTAINS` and
+`MEMBER_OF` retain separate meanings. See
+`INDUSTRY_SIGNAL_AGGREGATION_SPEC.md` for the calculation and limitations.

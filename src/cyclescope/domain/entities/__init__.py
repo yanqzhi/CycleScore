@@ -38,6 +38,15 @@ from cyclescope.domain.entities.industry_signal import (
     IndustrySignalType,
     IndustrySignalUnit,
 )
+from cyclescope.domain.entities.industry_signal_aggregate import (
+    AggregateInputRole,
+    AggregateStatus,
+    AggregationOperation,
+    AggregationPolicyCode,
+    IndustrySignalAggregateContributor,
+    IndustrySignalAggregateSnapshot,
+    IndustrySignalAggregationPolicy,
+)
 from cyclescope.domain.entities.ingestion import IngestionRun, RawDataRecord
 from cyclescope.domain.entities.inventory import (
     InventoryAnnualObservation,
@@ -126,6 +135,13 @@ __all__ = [
     "IndustrySignalTemporalKind",
     "IndustrySignalType",
     "IndustrySignalUnit",
+    "AggregateInputRole",
+    "AggregateStatus",
+    "AggregationOperation",
+    "AggregationPolicyCode",
+    "IndustrySignalAggregateContributor",
+    "IndustrySignalAggregationPolicy",
+    "IndustrySignalAggregateSnapshot",
     "IndustryClassificationMapping",
     "MappingMethod",
     "Region",

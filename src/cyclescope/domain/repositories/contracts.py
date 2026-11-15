@@ -26,6 +26,9 @@ from cyclescope.domain.entities.industry_signal import (
     IndustrySignalObservation,
     IndustrySignalType,
 )
+from cyclescope.domain.entities.industry_signal_aggregate import (
+    IndustrySignalAggregateSnapshot,
+)
 from cyclescope.domain.entities.ingestion import IngestionRun, RawDataRecord
 from cyclescope.domain.entities.inventory import InventorySnapshot
 from cyclescope.domain.entities.listing import Listing
@@ -184,6 +187,30 @@ class IndustrySignalObservationRepository(ABC):
         Apply both the availability cutoff and the observation date/period-end
         cutoff. Revision selection is left to Application after PIT filtering.
         """
+
+
+class IndustrySignalAggregateRepository(ABC):
+    """Append-only aggregate snapshot persistence; callers own transactions."""
+
+    @abstractmethod
+    def create(
+        self, aggregate: IndustrySignalAggregateSnapshot
+    ) -> IndustrySignalAggregateSnapshot:
+        """Append the snapshot and all provenance contributors atomically."""
+
+    @abstractmethod
+    def get_by_id(self, aggregate_id: int) -> IndustrySignalAggregateSnapshot | None:
+        """Retrieve one snapshot with its exact contributor audit rows."""
+
+    @abstractmethod
+    def list_by_industry(
+        self,
+        industry_id: int,
+        *,
+        signal_type: IndustrySignalType | None = None,
+        as_of: datetime | None = None,
+    ) -> list[IndustrySignalAggregateSnapshot]:
+        """List immutable snapshots, optionally filtered by type and cutoff."""
 
 
 class ClassificationSchemeRepository(ABC):

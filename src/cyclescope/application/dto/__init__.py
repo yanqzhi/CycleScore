@@ -18,6 +18,14 @@ from cyclescope.application.dto.industry_signal import (
     ImportIndustrySignalsResult,
     IndustrySignalInput,
 )
+from cyclescope.application.dto.industry_signal_aggregation import (
+    AggregateIndustrySignalsRequest,
+    AggregateIndustrySignalsResult,
+    GetIndustrySignalAggregateRequest,
+    GetIndustrySignalAggregateResult,
+    GetIndustrySignalAggregatesRequest,
+    GetIndustrySignalAggregatesResult,
+)
 from cyclescope.application.dto.inventory import (
     CalculateInventoryRequest,
     CalculateInventoryResponse,
@@ -102,6 +110,12 @@ __all__ = [
     "ImportIndustrySignalsRequest",
     "ImportIndustrySignalsResult",
     "IndustrySignalInput",
+    "AggregateIndustrySignalsRequest",
+    "AggregateIndustrySignalsResult",
+    "GetIndustrySignalAggregateRequest",
+    "GetIndustrySignalAggregateResult",
+    "GetIndustrySignalAggregatesRequest",
+    "GetIndustrySignalAggregatesResult",
     "DataRetrievalStatus",
     "FxObservationAsOfRequest",
     "FxPeriodRequest",
