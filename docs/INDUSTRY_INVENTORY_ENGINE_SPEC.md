@@ -23,9 +23,24 @@ YoY inventory growth is `(current inventory / inventory on exact calendar
 anniversary) - 1`. A February 29 observation has no prior-year match in a
 non-leap year; v1 does not silently substitute February 28 or March 1. A zero
 or missing prior-year balance makes YoY unavailable. The preceding observation
-is the latest earlier eligible point in the same cohort. Growth acceleration
-is current YoY less the previous observation's own exact-anniversary YoY.
-Missing periods are never filled with zero or interpolated.
+is selected from the latest earlier point in the same cohort, but is used as an
+adjacent comparison only when `expected_observation_interval_months` matches
+its calendar interval. Supported cadences are 1, 3, 6, and 12 months. Dates must
+have the same day number or both be month-end dates. A missing observation is
+not replaced by a more distant period, and observations are never interpolated.
+When cadence is unknown (`None`), adjacent change and Growth Acceleration are
+unavailable. Growth acceleration also requires both YoY pairs to have the same
+valid configured adjacent interval. Exact-anniversary YoY remains a separate
+calendar-year comparison.
+
+Every comparison also requires identical actual included measurement region
+identities (region ID and code) and identical known coverage for its inputs:
+current, previous, year-prior, and previous-year-prior inventory, plus
+production and shipments. Equal requested scopes do not imply equal actual
+composition. A mismatched input is excluded from that calculation and retained
+as an excluded input reference with its observed region set, coverage, and
+reason. Historical partial coverage cannot produce `AVAILABLE` merely because
+the current snapshot is complete.
 
 All inputs must share industry/sub-industry, aggregate region, complete exact
 requested constituent scope, source, unit, currency, and classification
@@ -62,6 +77,15 @@ have these meanings:
 | `stable_growth_tolerance` | Acceleration magnitude treated as stable; negative acceleration beyond it is deceleration |
 | `gap_ratio_tolerance` | Production-shipment gap tolerance as a share of current inventory |
 | `minimum_coverage` | Minimum region coverage for a usable classification |
+| `expected_observation_interval_months` | Explicit adjacent cadence: 1, 3, 6, or 12 months; `None` disables adjacent comparisons |
+
+Configuration validation requires non-negative accumulation thresholds,
+`rapid_accumulation_yoy > accumulation_yoy`, and
+`normalization_prior_yoy < 0 <= normalization_growth_ceiling <= accumulation_yoy`.
+Coverage and gap tolerance must be within `[0, 1]`; tolerances cannot be
+negative. These are logical consistency constraints, not calibrated threshold
+defaults. Operators may still supply explicitly calibrated values that satisfy
+the ordering rules.
 
 Precedence is deterministic. `DRAWDOWN` requires negative absolute change and
 negative YoY together with shipments exceeding production beyond the configured
@@ -78,7 +102,8 @@ YoY, and no materially negative matching flow gap. All other cases are
 ## Availability, coverage, and confidence
 
 Missing evidence remains null and carries a reason. Coverage is copied from the
-current aggregate's explicit regional coverage. Below the configured minimum,
+current aggregate's explicit regional coverage; each referenced input also
+retains its own coverage and actual contributing region set. Below the configured minimum,
 status and classification are `INSUFFICIENT_DATA` and `UNKNOWN`. Complete
 coverage with all comparison and flow evidence is `AVAILABLE`; otherwise
 adequately covered results are `PARTIAL`. Confidence is a separate bounded

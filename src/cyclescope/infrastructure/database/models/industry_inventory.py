@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -13,6 +14,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -82,7 +84,9 @@ class IndustryInventorySnapshotModel(TimestampMixin, Base):
     coverage: Mapped[Decimal | None] = mapped_column(Numeric(8, 7))
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(8, 7))
     config_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    config_snapshot: Mapped[dict[str, str | int]] = mapped_column(JSON, nullable=False)
+    config_snapshot: Mapped[dict[str, str | int | None]] = mapped_column(
+        JSON, nullable=False
+    )
     unavailable_reasons: Mapped[list[str]] = mapped_column(JSON, nullable=False)
 
 
@@ -130,6 +134,12 @@ class IndustryInventoryInputModel(TimestampMixin, Base):
             "'PRIOR_YEAR_PRIOR_INVENTORY','PRODUCTION','SHIPMENTS')",
             name="industry_inventory_input_role",
         ),
+        CheckConstraint(
+            "(included = 1 AND exclusion_reason IS NULL) OR "
+            "(included = 0 AND exclusion_reason IS NOT NULL "
+            "AND length(trim(exclusion_reason)) > 0)",
+            name="industry_inventory_input_inclusion_reason",
+        ),
         Index("ix_industry_inventory_inputs_aggregate", "aggregate_id"),
     )
 
@@ -152,3 +162,9 @@ class IndustryInventoryInputModel(TimestampMixin, Base):
         DateTime(timezone=True), nullable=False
     )
     contributor_revisions: Mapped[list[list[int]]] = mapped_column(JSON, nullable=False)
+    contributing_regions: Mapped[list[dict[str, int | str]] | None] = mapped_column(
+        JSON
+    )
+    coverage: Mapped[Decimal | None] = mapped_column(Numeric(8, 7))
+    included: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    exclusion_reason: Mapped[str | None] = mapped_column(Text)

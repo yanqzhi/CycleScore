@@ -16,6 +16,7 @@ from cyclescope.domain.services.industry_inventory import (
     _checked,
     _classify,
     _date_year_ago,
+    _expected_interval,
     _ratio_change,
 )
 
@@ -30,6 +31,7 @@ def _config() -> IndustryInventoryConfig:
         stable_growth_tolerance=Decimal("0.02"),
         gap_ratio_tolerance=Decimal("0.02"),
         minimum_coverage=Decimal("0.80"),
+        expected_observation_interval_months=12,
     )
 
 
@@ -98,6 +100,20 @@ def test_exact_calendar_anniversary_does_not_substitute_for_leap_day() -> None:
     assert _date_year_ago(date(2025, 2, 28)) == date(2024, 2, 28)
 
 
+def test_unconfigured_observation_interval_disables_adjacent_comparisons() -> None:
+    config = IndustryInventoryConfig(
+        version=1,
+        accumulation_yoy=Decimal("0.05"),
+        rapid_accumulation_yoy=Decimal("0.20"),
+        normalization_prior_yoy=Decimal("-0.10"),
+        normalization_growth_ceiling=Decimal("0.05"),
+        stable_growth_tolerance=Decimal("0.02"),
+        gap_ratio_tolerance=Decimal("0.02"),
+        minimum_coverage=Decimal("0.80"),
+    )
+    assert config.expected_observation_interval_months is None
+
+
 def test_zero_prior_year_inventory_is_invalid_for_yoy() -> None:
     with pytest.raises(DomainValidationError, match="zero"):
         _ratio_change(Decimal("10"), Decimal(0))
@@ -121,6 +137,57 @@ def test_configuration_rejects_inconsistent_thresholds() -> None:
             stable_growth_tolerance=Decimal("0.02"),
             gap_ratio_tolerance=Decimal("0.02"),
             minimum_coverage=Decimal("0.80"),
+            expected_observation_interval_months=12,
             accumulation_yoy=Decimal("0.20"),
             rapid_accumulation_yoy=Decimal("0.20"),
         )
+
+
+@pytest.mark.parametrize(
+    ("prior", "current", "months", "expected"),
+    [
+        # A missing monthly observation must not be treated as the adjacent month.
+        (date(2025, 1, 31), date(2025, 3, 31), 1, False),
+        # Same month delta with different non-month-end days is irregular.
+        (date(2025, 1, 15), date(2025, 2, 28), 1, False),
+        # Calendar quarter ends are comparable at the configured 3-month cadence.
+        (date(2025, 3, 31), date(2025, 6, 30), 3, True),
+        # A quarter with a missing month cannot be substituted.
+        (date(2025, 3, 31), date(2025, 7, 31), 3, False),
+        # Unknown cadence is conservatively unavailable.
+        (date(2025, 6, 30), date(2025, 12, 31), None, False),
+    ],
+)
+def test_observation_interval_policy(
+    prior: date, current: date, months: int | None, expected: bool
+) -> None:
+    assert _expected_interval(prior, current, months) is expected
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"normalization_prior_yoy": Decimal("0")},
+        {"normalization_growth_ceiling": Decimal("0.06")},
+        {"accumulation_yoy": Decimal("-0.01")},
+        {"expected_observation_interval_months": 2},
+        {"gap_ratio_tolerance": Decimal("1.01")},
+    ],
+)
+def test_configuration_rejects_invalid_boundaries(
+    overrides: dict[str, Decimal | int],
+) -> None:
+    values: dict[str, Decimal | int] = {
+        "version": 1,
+        "accumulation_yoy": Decimal("0.05"),
+        "rapid_accumulation_yoy": Decimal("0.20"),
+        "normalization_prior_yoy": Decimal("-0.10"),
+        "normalization_growth_ceiling": Decimal("0.05"),
+        "stable_growth_tolerance": Decimal("0.02"),
+        "gap_ratio_tolerance": Decimal("0.02"),
+        "minimum_coverage": Decimal("0.80"),
+        "expected_observation_interval_months": 12,
+    }
+    values.update(overrides)
+    with pytest.raises(DomainValidationError):
+        IndustryInventoryConfig(**values)  # type: ignore[arg-type]

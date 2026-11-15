@@ -43,6 +43,7 @@ class IndustryInventoryConfig:
     stable_growth_tolerance: Decimal
     gap_ratio_tolerance: Decimal
     minimum_coverage: Decimal
+    expected_observation_interval_months: int | None = None
 
     def __post_init__(self) -> None:
         if self.version < 1:
@@ -60,10 +61,30 @@ class IndustryInventoryConfig:
             raise DomainValidationError("Configuration values must be finite.")
         if not Decimal(0) <= self.minimum_coverage <= Decimal(1):
             raise DomainValidationError("minimum_coverage must be within [0, 1].")
+        if self.accumulation_yoy < 0:
+            raise DomainValidationError("accumulation_yoy must be non-negative.")
         if self.rapid_accumulation_yoy <= self.accumulation_yoy:
             raise DomainValidationError("Rapid threshold must exceed accumulation.")
+        if (
+            self.normalization_prior_yoy >= 0
+            or self.normalization_growth_ceiling < 0
+            or self.normalization_prior_yoy >= self.normalization_growth_ceiling
+            or self.normalization_growth_ceiling > self.accumulation_yoy
+        ):
+            raise DomainValidationError(
+                "Normalization thresholds must satisfy prior < 0 <= ceiling "
+                "<= accumulation threshold."
+            )
         if self.stable_growth_tolerance < 0 or self.gap_ratio_tolerance < 0:
             raise DomainValidationError("Tolerances cannot be negative.")
+        if self.gap_ratio_tolerance > 1:
+            raise DomainValidationError("gap_ratio_tolerance cannot exceed 1.")
+        if self.expected_observation_interval_months is not None and (
+            self.expected_observation_interval_months not in {1, 3, 6, 12}
+        ):
+            raise DomainValidationError(
+                "Expected observation interval must be 1, 3, 6, or 12 months."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +97,10 @@ class IndustryInventoryInputReference:
     source_id: int | None
     available_at: datetime
     contributor_revisions: tuple[tuple[int, int, int], ...]
+    contributing_regions: tuple[tuple[int, str], ...]
+    coverage: Decimal | None
+    included: bool = True
+    exclusion_reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.aggregate_id < 1 or not self.role.strip():
@@ -90,6 +115,21 @@ class IndustryInventoryInputReference:
             raise DomainValidationError(
                 "Contributor revision references must be positive."
             )
+        if self.contributing_regions != tuple(sorted(set(self.contributing_regions))):
+            raise DomainValidationError(
+                "Input contributing regions must be unique and ordered."
+            )
+        if self.coverage is not None and (
+            not self.coverage.is_finite()
+            or not Decimal(0) <= self.coverage <= Decimal(1)
+        ):
+            raise DomainValidationError("Input coverage must be within [0, 1].")
+        if self.included and self.exclusion_reason is not None:
+            raise DomainValidationError(
+                "Included inputs cannot have an exclusion reason."
+            )
+        if not self.included and not (self.exclusion_reason or "").strip():
+            raise DomainValidationError("Excluded inputs require an explicit reason.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,7 +255,7 @@ class IndustryInventorySnapshot:
             )
         if any(
             ref.available_at > self.as_of
-            or ref.source_id != self.source_id
+            or (ref.included and ref.source_id != self.source_id)
             or (
                 ref.observation_date is not None
                 and ref.observation_date > self.as_of.date()

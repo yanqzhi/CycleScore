@@ -138,6 +138,7 @@ def _config(minimum_coverage: Decimal = Decimal("0.80")) -> IndustryInventoryCon
         stable_growth_tolerance=Decimal("0.02"),
         gap_ratio_tolerance=Decimal("0.02"),
         minimum_coverage=minimum_coverage,
+        expected_observation_interval_months=12,
     )
 
 
@@ -147,6 +148,8 @@ def _aggregate_series(
     missing_current_region: str | None = None,
     omitted_inventory_date: date | None = None,
     mismatched_flow_start: bool = False,
+    inventory_region_overrides: dict[date, tuple[str, ...]] | None = None,
+    flow_region_overrides: dict[IndustrySignalType, tuple[str, ...]] | None = None,
 ):
     aggregate, importer, aggregate_repo, industry, source = _setup(session)
     signals = []
@@ -157,6 +160,9 @@ def _aggregate_series(
     )
     for observed, total in values:
         available = datetime.combine(observed, datetime.min.time(), tzinfo=UTC)
+        selected_regions = (inventory_region_overrides or {}).get(
+            observed, ("JP", "US")
+        )
         for region, value in (
             ("JP", str(Decimal(total) / 2)),
             ("US", str(Decimal(total) / 2)),
@@ -164,6 +170,8 @@ def _aggregate_series(
             if observed == omitted_inventory_date:
                 continue
             if observed == date(2025, 12, 31) and region == missing_current_region:
+                continue
+            if region not in selected_regions:
                 continue
             signals.append(
                 _input(
@@ -196,7 +204,8 @@ def _aggregate_series(
         (IndustrySignalType.PRODUCTION, "50"),
         (IndustrySignalType.SHIPMENTS, "40"),
     ):
-        for region in ("JP", "US"):
+        selected_regions = (flow_region_overrides or {}).get(signal, ("JP", "US"))
+        for region in selected_regions:
             signals.append(
                 _input(
                     industry.id or 0,
@@ -252,6 +261,7 @@ def _aggregate_series(
                 period_start=date(2025, 12, 1),
                 period_end=date(2025, 12, 31),
                 expected_contributor_count=2,
+                minimum_coverage=Decimal("0.40"),
             )
         )
     return aggregate_repo, industry, source, scope
@@ -419,7 +429,8 @@ def test_missing_region_is_retained_as_requested_but_not_actual_scope(
     assert result.requested_scope == scope
     assert result.contributing_regions == (scope[0],)
     assert result.coverage == Decimal("0.5000000")
-    assert result.status is IndustryInventoryStatus.PARTIAL
+    assert result.status is IndustryInventoryStatus.INSUFFICIENT_DATA
+    assert result.yoy_growth is None
     assert any("US" in reason for reason in result.unavailable_reasons)
 
 
@@ -476,6 +487,162 @@ def test_mismatched_flow_periods_are_not_compared(session: Session) -> None:
     assert any("matching period" in reason for reason in result.unavailable_reasons)
 
 
+@pytest.mark.parametrize(
+    ("overrides", "expected_role", "expected_region_codes"),
+    [
+        (
+            {date(2024, 12, 31): ("JP",)},
+            "YEAR_PRIOR_INVENTORY",
+            ("JP",),
+        ),
+        (
+            {date(2024, 12, 31): ("US",)},
+            "YEAR_PRIOR_INVENTORY",
+            ("US",),
+        ),
+        (
+            {
+                date(2023, 12, 31): ("JP",),
+                date(2024, 12, 31): ("US",),
+            },
+            "PRIOR_YEAR_PRIOR_INVENTORY",
+            ("JP",),
+        ),
+    ],
+)
+def test_incompatible_historical_inventory_composition_is_audited_and_not_compared(
+    session: Session,
+    overrides: dict[date, tuple[str, ...]],
+    expected_role: str,
+    expected_region_codes: tuple[str, ...],
+) -> None:
+    aggregate_repo, industry, source, scope = _aggregate_series(
+        session, inventory_region_overrides=overrides
+    )
+    result = (
+        AnalyzeIndustryInventory(
+            aggregate_repo, SQLAlchemyIndustryInventoryRepository(session)
+        )
+        .execute(
+            AnalyzeIndustryInventoryRequest(
+                industry_id=industry.id or 0,
+                aggregate_region_code="WORLD",
+                requested_scope=scope,
+                source_id=source.id,
+                as_of=CUTOFF,
+                config=_config(Decimal("0.40")),
+            )
+        )
+        .snapshot
+    )
+
+    assert result.yoy_growth is None
+    assert result.status is IndustryInventoryStatus.INSUFFICIENT_DATA
+    ref = next(item for item in result.input_references if item.role == expected_role)
+    assert not ref.included
+    assert (
+        tuple(code for _region_id, code in ref.contributing_regions)
+        == expected_region_codes
+    )
+    assert ref.coverage == Decimal("0.5000000")
+    assert ref.exclusion_reason is not None
+    assert "actual contributing regions differ" in ref.exclusion_reason
+    assert result.classification is IndustryInventoryClassification.UNKNOWN
+
+
+def test_current_and_previous_inventory_with_different_regions_are_not_compared(
+    session: Session,
+) -> None:
+    aggregate_repo, industry, source, scope = _aggregate_series(
+        session,
+        inventory_region_overrides={date(2024, 12, 31): ("JP",)},
+    )
+    result = (
+        AnalyzeIndustryInventory(
+            aggregate_repo, SQLAlchemyIndustryInventoryRepository(session)
+        )
+        .execute(
+            AnalyzeIndustryInventoryRequest(
+                industry_id=industry.id or 0,
+                aggregate_region_code="WORLD",
+                requested_scope=scope,
+                source_id=source.id,
+                as_of=CUTOFF,
+                config=_config(Decimal("0.40")),
+            )
+        )
+        .snapshot
+    )
+    assert result.prior_inventory_value is None
+    assert result.absolute_change is None
+    assert result.trend is IndustryInventoryTrend.UNKNOWN
+    assert any(
+        "Previous inventory excluded" in reason for reason in result.unavailable_reasons
+    )
+
+
+def test_production_and_shipments_require_identical_actual_regions(
+    session: Session,
+) -> None:
+    aggregate_repo, industry, source, scope = _aggregate_series(
+        session,
+        flow_region_overrides={
+            IndustrySignalType.PRODUCTION: ("JP", "US"),
+            IndustrySignalType.SHIPMENTS: ("JP",),
+        },
+    )
+    result = (
+        AnalyzeIndustryInventory(
+            aggregate_repo, SQLAlchemyIndustryInventoryRepository(session)
+        )
+        .execute(
+            AnalyzeIndustryInventoryRequest(
+                industry_id=industry.id or 0,
+                aggregate_region_code="WORLD",
+                requested_scope=scope,
+                source_id=source.id,
+                as_of=CUTOFF,
+                config=_config(),
+            )
+        )
+        .snapshot
+    )
+    assert result.production_shipment_gap is None
+    shipment = next(ref for ref in result.input_references if ref.role == "SHIPMENTS")
+    assert not shipment.included
+    assert tuple(code for _region_id, code in shipment.contributing_regions) == ("JP",)
+    assert "actual contributing regions differ" in (shipment.exclusion_reason or "")
+
+
+def test_historical_partial_coverage_cannot_become_available_from_full_current_coverage(
+    session: Session,
+) -> None:
+    aggregate_repo, industry, source, scope = _aggregate_series(
+        session,
+        inventory_region_overrides={date(2024, 12, 31): ("JP",)},
+    )
+    result = (
+        AnalyzeIndustryInventory(
+            aggregate_repo, SQLAlchemyIndustryInventoryRepository(session)
+        )
+        .execute(
+            AnalyzeIndustryInventoryRequest(
+                industry_id=industry.id or 0,
+                aggregate_region_code="WORLD",
+                requested_scope=scope,
+                source_id=source.id,
+                as_of=CUTOFF,
+                config=_config(Decimal("0.40")),
+            )
+        )
+        .snapshot
+    )
+    assert result.coverage == Decimal("1.0000000")
+    assert result.yoy_growth is None
+    assert result.status is IndustryInventoryStatus.INSUFFICIENT_DATA
+    assert result.classification is IndustryInventoryClassification.UNKNOWN
+
+
 def test_engine_migration_upgrade_and_downgrade(tmp_path: Path) -> None:
     database = tmp_path / "industry_inventory_migration.db"
     config = Config(str(Path.cwd() / "alembic.ini"))
@@ -491,10 +658,21 @@ def test_engine_migration_upgrade_and_downgrade(tmp_path: Path) -> None:
         )
     legacy_engine.dispose()
     command.upgrade(config, "0025_industry_inventory_engine")
+    command.upgrade(config, "0026_industry_inventory_input_composition")
     engine = create_database_engine(f"sqlite:///{database}")
     assert "industry_inventory_snapshots" in inspect(engine).get_table_names()
     assert "industry_inventory_inputs" in inspect(engine).get_table_names()
     assert "industry_inventory_scopes" in inspect(engine).get_table_names()
+    columns = {
+        column["name"]
+        for column in inspect(engine).get_columns("industry_inventory_inputs")
+    }
+    assert {
+        "contributing_regions",
+        "coverage",
+        "included",
+        "exclusion_reason",
+    } <= columns
     with engine.connect() as connection:
         assert (
             connection.exec_driver_sql(
@@ -502,6 +680,20 @@ def test_engine_migration_upgrade_and_downgrade(tmp_path: Path) -> None:
             ).scalar_one()
             == "Legacy industry"
         )
+    command.downgrade(config, "0025_industry_inventory_engine")
+    legacy_columns = {
+        column["name"]
+        for column in inspect(engine).get_columns("industry_inventory_inputs")
+    }
+    assert (
+        not {
+            "contributing_regions",
+            "coverage",
+            "included",
+            "exclusion_reason",
+        }
+        & legacy_columns
+    )
     command.downgrade(config, "0024_industry_signal_aggregate_scopes")
     assert "industry_inventory_snapshots" not in inspect(engine).get_table_names()
     assert "industry_inventory_inputs" not in inspect(engine).get_table_names()

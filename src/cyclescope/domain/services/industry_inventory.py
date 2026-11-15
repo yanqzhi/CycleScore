@@ -1,6 +1,6 @@
 """Conservative point-in-time industry inventory cycle analysis."""
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal, DecimalException, localcontext
 
 from cyclescope.domain.entities.industry_inventory import (
@@ -179,8 +179,48 @@ def _latest_by_date(
     return result
 
 
+def _actual_regions(
+    row: IndustrySignalAggregateSnapshot,
+) -> tuple[tuple[int, str], ...]:
+    scope_ids = {
+        scope.region_code: scope.region_id
+        for scope in row.requested_scopes
+        if scope.role is AggregateScopeRole.CONSTITUENT
+    }
+    codes = {
+        item.region_code
+        for item in row.contributors
+        if item.included and item.role is AggregateInputRole.MEASURE
+    }
+    if not codes.issubset(scope_ids):
+        raise DomainValidationError(
+            "Included measurement region is outside the persisted aggregate scope."
+        )
+    return tuple(sorted((scope_ids[code], code) for code in codes))
+
+
+def _expected_interval(
+    earlier: date,
+    later: date,
+    months: int | None,
+) -> bool:
+    """Accept configured month cadence, preserving equal day or month-end dates."""
+    if months is None:
+        return False
+    month_delta = (later.year - earlier.year) * 12 + later.month - earlier.month
+    if month_delta != months or later <= earlier:
+        return False
+    earlier_is_month_end = (earlier + timedelta(days=1)).day == 1
+    later_is_month_end = (later + timedelta(days=1)).day == 1
+    return (earlier.day == later.day) or (earlier_is_month_end and later_is_month_end)
+
+
 def _reference(
-    row: IndustrySignalAggregateSnapshot, role: str
+    row: IndustrySignalAggregateSnapshot,
+    role: str,
+    *,
+    included: bool = True,
+    exclusion_reason: str | None = None,
 ) -> IndustryInventoryInputReference:
     assert row.id is not None
     return IndustryInventoryInputReference(
@@ -201,6 +241,10 @@ def _reference(
                 if item.included and item.role is AggregateInputRole.MEASURE
             )
         ),
+        contributing_regions=_actual_regions(row),
+        coverage=row.coverage_ratio,
+        included=included,
+        exclusion_reason=exclusion_reason,
     )
 
 
@@ -259,17 +303,108 @@ def calculate_industry_inventory(
     )
     current_date = max(inventory_by_date)
     current = inventory_by_date[current_date]
-    prior_date = max((d for d in inventory_by_date if d < current_date), default=None)
-    prior = inventory_by_date.get(prior_date) if prior_date else None
+    prior_date_candidate = max(
+        (day for day in inventory_by_date if day < current_date), default=None
+    )
+    prior_candidate = (
+        inventory_by_date.get(prior_date_candidate)
+        if prior_date_candidate is not None
+        else None
+    )
     anniversary = _date_year_ago(current_date)
-    year_prior = inventory_by_date.get(anniversary) if anniversary else None
-    prior_anniversary = _date_year_ago(prior_date) if prior_date else None
-    prior_year_prior = (
-        inventory_by_date.get(prior_anniversary) if prior_anniversary else None
+    year_prior_candidate = (
+        inventory_by_date.get(anniversary) if anniversary is not None else None
+    )
+    prior_anniversary = (
+        _date_year_ago(prior_date_candidate)
+        if prior_date_candidate is not None
+        else None
+    )
+    prior_year_prior_candidate = (
+        inventory_by_date.get(prior_anniversary)
+        if prior_anniversary is not None
+        else None
     )
 
-    reasons: list[str] = []
-    reasons.extend(current.missing_reasons)
+    reasons: list[str] = list(current.missing_reasons)
+    current_regions = _actual_regions(current)
+    current_coverage = current.coverage_ratio
+    current_composition_known = bool(current_regions) and current_coverage is not None
+    if not current_composition_known:
+        reasons.append(
+            "Current inventory has unknown or empty actual regional "
+            "composition/coverage."
+        )
+
+    def composition_ok(
+        row: IndustrySignalAggregateSnapshot | None, role: str
+    ) -> tuple[bool, str | None]:
+        if row is None:
+            return False, f"{role} aggregate is unavailable."
+        if not current_composition_known:
+            return (
+                False,
+                f"{role} cannot be validated against unknown current composition.",
+            )
+        if _actual_regions(row) != current_regions:
+            return (
+                False,
+                f"{role} excluded: actual contributing regions differ from "
+                "current inventory.",
+            )
+        if row.coverage_ratio is None or row.coverage_ratio != current_coverage:
+            return (
+                False,
+                f"{role} excluded: coverage differs from current inventory "
+                "or is unknown.",
+            )
+        return True, None
+
+    interval_months = config.expected_observation_interval_months
+    prior_interval_ok = prior_date_candidate is not None and _expected_interval(
+        prior_date_candidate, current_date, interval_months
+    )
+    prior_composition_ok, prior_composition_reason = composition_ok(
+        prior_candidate, "Previous inventory"
+    )
+    prior = prior_candidate if prior_interval_ok and prior_composition_ok else None
+    prior_exclusion_reason = None
+    if prior_candidate is not None and not prior_interval_ok:
+        prior_exclusion_reason = (
+            "Previous inventory excluded: observation interval does not match "
+            "the configured cadence."
+        )
+        reasons.append(prior_exclusion_reason)
+    if prior_candidate is not None and not prior_composition_ok:
+        prior_exclusion_reason = prior_composition_reason or (
+            "Previous inventory composition is incompatible."
+        )
+        reasons.append(prior_exclusion_reason)
+
+    year_prior_composition_ok, year_prior_reason = composition_ok(
+        year_prior_candidate, "Year-prior inventory"
+    )
+    year_prior = year_prior_candidate if year_prior_composition_ok else None
+    if year_prior_candidate is None:
+        reasons.append(
+            "Exact calendar-anniversary inventory observation is unavailable."
+        )
+    elif not year_prior_composition_ok:
+        reasons.append(
+            year_prior_reason or "Year-prior inventory composition is incompatible."
+        )
+
+    prior_year_prior_composition_ok, prior_year_prior_reason = composition_ok(
+        prior_year_prior_candidate, "Previous-year-prior inventory"
+    )
+    prior_year_prior = (
+        prior_year_prior_candidate if prior_year_prior_composition_ok else None
+    )
+    if prior_year_prior_candidate is not None and not prior_year_prior_composition_ok:
+        reasons.append(
+            prior_year_prior_reason
+            or "Previous-year-prior inventory composition is incompatible."
+        )
     for row in aggregates:
         if (
             row.signal_type
@@ -307,9 +442,7 @@ def calculate_industry_inventory(
     yoy = None
     yoy_raw = None
     if year_prior is None or current_value is None or year_prior.value is None:
-        reasons.append(
-            "Exact calendar-anniversary inventory observation is unavailable."
-        )
+        pass
     elif year_prior.value == 0:
         reasons.append(
             "YoY growth is unavailable because prior-year inventory is zero."
@@ -332,13 +465,33 @@ def calculate_industry_inventory(
             reasons.append(
                 "Previous comparable YoY unavailable: prior denominator is zero."
             )
-    else:
+    elif prior is None or prior_year_prior is None:
         reasons.append("Previous comparable YoY is unavailable.")
     acceleration = (
         _subtract(yoy_raw, prior_yoy_raw)
-        if yoy_raw is not None and prior_yoy_raw is not None
+        if (
+            yoy_raw is not None
+            and prior_yoy_raw is not None
+            and prior_date_candidate is not None
+            and interval_months is not None
+            and _expected_interval(prior_date_candidate, current_date, interval_months)
+            and year_prior is not None
+            and prior_year_prior is not None
+            and prior_year_prior.observation_date is not None
+            and year_prior.observation_date is not None
+            and _expected_interval(
+                prior_year_prior.observation_date,
+                year_prior.observation_date,
+                interval_months,
+            )
+        )
         else None
     )
+    if yoy_raw is not None and prior_yoy_raw is not None and acceleration is None:
+        reasons.append(
+            "Growth acceleration is unavailable: adjacent observations do not "
+            "match the configured interval."
+        )
 
     productions = [
         r
@@ -352,8 +505,24 @@ def calculate_industry_inventory(
         if r.signal_type is IndustrySignalType.SHIPMENTS
         and r.period_end == current_date
     ]
-    production = max(productions, key=lambda r: (r.as_of, r.id or 0), default=None)
-    shipment = max(shipments, key=lambda r: (r.as_of, r.id or 0), default=None)
+    production_candidate = max(
+        productions, key=lambda r: (r.as_of, r.id or 0), default=None
+    )
+    shipment_candidate = max(
+        shipments, key=lambda r: (r.as_of, r.id or 0), default=None
+    )
+    production_composition_ok, production_reason = composition_ok(
+        production_candidate, "Production"
+    )
+    shipment_composition_ok, shipment_reason = composition_ok(
+        shipment_candidate, "Shipments"
+    )
+    production = production_candidate if production_composition_ok else None
+    shipment = shipment_candidate if shipment_composition_ok else None
+    if production_candidate is not None and not production_composition_ok:
+        reasons.append(production_reason or "Production composition is incompatible.")
+    if shipment_candidate is not None and not shipment_composition_ok:
+        reasons.append(shipment_reason or "Shipments composition is incompatible.")
     gap = None
     if (
         production is not None
@@ -397,6 +566,7 @@ def calculate_industry_inventory(
             Status.AVAILABLE
             if (
                 coverage == 1
+                and current_regions == scope
                 and prior_yoy is not None
                 and gap is not None
                 and absolute_change is not None
@@ -418,25 +588,43 @@ def calculate_industry_inventory(
             reasons.append("Inventory region coverage is below the configured minimum.")
     refs: list[IndustryInventoryInputReference] = []
     refs.append(_reference(current, "CURRENT_INVENTORY"))
-    for optional_row, role in (
-        (prior, "PRIOR_INVENTORY"),
-        (year_prior, "YEAR_PRIOR_INVENTORY"),
-        (prior_year_prior, "PRIOR_YEAR_PRIOR_INVENTORY"),
-        (production, "PRODUCTION"),
-        (shipment, "SHIPMENTS"),
+    for optional_row, role, accepted, exclusion_reason in (
+        (prior_candidate, "PRIOR_INVENTORY", prior is not None, prior_exclusion_reason),
+        (
+            year_prior_candidate,
+            "YEAR_PRIOR_INVENTORY",
+            year_prior is not None,
+            None if year_prior is not None else year_prior_reason,
+        ),
+        (
+            prior_year_prior_candidate,
+            "PRIOR_YEAR_PRIOR_INVENTORY",
+            prior_year_prior is not None,
+            None if prior_year_prior is not None else prior_year_prior_reason,
+        ),
+        (
+            production_candidate,
+            "PRODUCTION",
+            production is not None,
+            None if production is not None else production_reason,
+        ),
+        (
+            shipment_candidate,
+            "SHIPMENTS",
+            shipment is not None,
+            None if shipment is not None else shipment_reason,
+        ),
     ):
         if optional_row is not None:
-            refs.append(_reference(optional_row, role))
-    scope_region_id = {code: region_id for region_id, code in scope}
-    contributing_regions = tuple(
-        sorted(
-            {
-                (scope_region_id[item.region_code], item.region_code)
-                for item in current.contributors
-                if item.included and item.role is AggregateInputRole.MEASURE
-            }
-        )
-    )
+            refs.append(
+                _reference(
+                    optional_row,
+                    role,
+                    included=accepted,
+                    exclusion_reason=exclusion_reason,
+                )
+            )
+    contributing_regions = current_regions
     return IndustryInventorySnapshot(
         industry_id=industry_id,
         sub_industry_id=sub_industry_id,

@@ -28,7 +28,7 @@ def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
-def _config_dict(config: IndustryInventoryConfig) -> dict[str, str | int]:
+def _config_dict(config: IndustryInventoryConfig) -> dict[str, str | int | None]:
     return {
         "version": config.version,
         "accumulation_yoy": str(config.accumulation_yoy),
@@ -38,12 +38,21 @@ def _config_dict(config: IndustryInventoryConfig) -> dict[str, str | int]:
         "stable_growth_tolerance": str(config.stable_growth_tolerance),
         "gap_ratio_tolerance": str(config.gap_ratio_tolerance),
         "minimum_coverage": str(config.minimum_coverage),
+        "expected_observation_interval_months": (
+            config.expected_observation_interval_months
+        ),
     }
 
 
-def _from_config(value: dict[str, str | int]) -> IndustryInventoryConfig:
+def _from_config(
+    value: dict[str, str | int | None],
+) -> IndustryInventoryConfig:
+    version = value["version"]
+    interval = value.get("expected_observation_interval_months")
+    if not isinstance(version, int):
+        raise ValueError("Stored industry inventory config version is invalid.")
     return IndustryInventoryConfig(
-        version=int(value["version"]),
+        version=version,
         accumulation_yoy=Decimal(str(value["accumulation_yoy"])),
         rapid_accumulation_yoy=Decimal(str(value["rapid_accumulation_yoy"])),
         normalization_prior_yoy=Decimal(str(value["normalization_prior_yoy"])),
@@ -53,6 +62,9 @@ def _from_config(value: dict[str, str | int]) -> IndustryInventoryConfig:
         stable_growth_tolerance=Decimal(str(value["stable_growth_tolerance"])),
         gap_ratio_tolerance=Decimal(str(value["gap_ratio_tolerance"])),
         minimum_coverage=Decimal(str(value["minimum_coverage"])),
+        expected_observation_interval_months=(
+            interval if isinstance(interval, int) else None
+        ),
     )
 
 
@@ -158,6 +170,13 @@ class SQLAlchemyIndustryInventoryRepository(IndustryInventoryRepository):
                     contributor_revisions=[
                         list(ref) for ref in item.contributor_revisions
                     ],
+                    contributing_regions=[
+                        {"region_id": region_id, "region_code": region_code}
+                        for region_id, region_code in item.contributing_regions
+                    ],
+                    coverage=item.coverage,
+                    included=item.included,
+                    exclusion_reason=item.exclusion_reason,
                 )
             )
         self._session.flush()
@@ -242,6 +261,15 @@ class SQLAlchemyIndustryInventoryRepository(IndustryInventoryRepository):
                     (int(ref[0]), int(ref[1]), int(ref[2]))
                     for ref in row.contributor_revisions
                 ),
+                contributing_regions=tuple(
+                    sorted(
+                        (int(region["region_id"]), str(region["region_code"]))
+                        for region in (row.contributing_regions or [])
+                    )
+                ),
+                coverage=row.coverage,
+                included=row.included,
+                exclusion_reason=row.exclusion_reason,
             )
             for row in rows
         )
