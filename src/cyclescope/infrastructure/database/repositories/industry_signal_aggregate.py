@@ -13,10 +13,12 @@ from cyclescope.domain.entities.industry_signal import (
 )
 from cyclescope.domain.entities.industry_signal_aggregate import (
     AggregateInputRole,
+    AggregateScopeRole,
     AggregateStatus,
     AggregationOperation,
     AggregationPolicyCode,
     IndustrySignalAggregateContributor,
+    IndustrySignalAggregateScope,
     IndustrySignalAggregateSnapshot,
 )
 from cyclescope.domain.exceptions import DomainValidationError
@@ -24,6 +26,7 @@ from cyclescope.domain.repositories.contracts import IndustrySignalAggregateRepo
 from cyclescope.infrastructure.database.models.industry_signal_aggregate import (
     IndustrySignalAggregateContributorModel,
     IndustrySignalAggregateModel,
+    IndustrySignalAggregateScopeModel,
 )
 
 
@@ -64,6 +67,7 @@ def _to_contributor(
 def _to_snapshot(
     row: IndustrySignalAggregateModel,
     contributors: tuple[IndustrySignalAggregateContributor, ...],
+    scopes: tuple[IndustrySignalAggregateScope, ...],
 ) -> IndustrySignalAggregateSnapshot:
     return IndustrySignalAggregateSnapshot(
         id=row.id,
@@ -72,6 +76,9 @@ def _to_snapshot(
         signal_type=IndustrySignalType(row.signal_type),
         temporal_kind=IndustrySignalTemporalKind(row.temporal_kind),
         aggregate_region_code=row.aggregate_region_code,
+        aggregate_region_id=row.aggregate_region_id,
+        requested_scopes=scopes,
+        scope_complete=row.scope_complete,
         source_id=row.source_id,
         unit_code=IndustrySignalUnit(row.unit_code),
         currency_code=row.currency_code,
@@ -112,6 +119,8 @@ class SQLAlchemyIndustrySignalAggregateRepository(IndustrySignalAggregateReposit
             signal_type=aggregate.signal_type.value,
             temporal_kind=aggregate.temporal_kind.value,
             aggregate_region_code=aggregate.aggregate_region_code,
+            aggregate_region_id=aggregate.aggregate_region_id,
+            scope_complete=aggregate.scope_complete,
             source_id=aggregate.source_id,
             unit_code=aggregate.unit_code.value,
             currency_code=aggregate.currency_code,
@@ -136,6 +145,15 @@ class SQLAlchemyIndustrySignalAggregateRepository(IndustrySignalAggregateReposit
         )
         self._session.add(row)
         self._session.flush()
+        for scope in aggregate.requested_scopes:
+            self._session.add(
+                IndustrySignalAggregateScopeModel(
+                    aggregate_id=row.id,
+                    region_id=scope.region_id,
+                    region_code=scope.region_code,
+                    scope_role=scope.role.value,
+                )
+            )
         for contributor in aggregate.contributors:
             self._session.add(
                 IndustrySignalAggregateContributorModel(
@@ -169,13 +187,14 @@ class SQLAlchemyIndustrySignalAggregateRepository(IndustrySignalAggregateReposit
             )
         self._session.flush()
         self._session.refresh(row)
+        self._session.flush()
         return replace(aggregate, id=row.id)
 
     def get_by_id(self, aggregate_id: int) -> IndustrySignalAggregateSnapshot | None:
         row = self._session.get(IndustrySignalAggregateModel, aggregate_id)
         if row is None:
             return None
-        return _to_snapshot(row, self._contributors(row.id))
+        return _to_snapshot(row, self._contributors(row.id), self._scopes(row.id))
 
     def list_by_industry(
         self,
@@ -204,7 +223,29 @@ class SQLAlchemyIndustrySignalAggregateRepository(IndustrySignalAggregateReposit
                 IndustrySignalAggregateModel.id,
             )
         )
-        return [_to_snapshot(row, self._contributors(row.id)) for row in rows]
+        return [
+            _to_snapshot(row, self._contributors(row.id), self._scopes(row.id))
+            for row in rows
+        ]
+
+    def _scopes(self, aggregate_id: int) -> tuple[IndustrySignalAggregateScope, ...]:
+        rows = self._session.scalars(
+            select(IndustrySignalAggregateScopeModel)
+            .where(IndustrySignalAggregateScopeModel.aggregate_id == aggregate_id)
+            .order_by(
+                IndustrySignalAggregateScopeModel.scope_role,
+                IndustrySignalAggregateScopeModel.region_code,
+                IndustrySignalAggregateScopeModel.region_id,
+            )
+        )
+        return tuple(
+            IndustrySignalAggregateScope(
+                region_id=row.region_id,
+                region_code=row.region_code,
+                role=AggregateScopeRole(row.scope_role),
+            )
+            for row in rows
+        )
 
     def _contributors(
         self, aggregate_id: int

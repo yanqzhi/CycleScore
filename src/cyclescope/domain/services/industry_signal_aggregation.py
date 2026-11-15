@@ -1,7 +1,7 @@
 """Versioned and provider-independent industry signal aggregation rules."""
 
 from datetime import UTC, date, datetime
-from decimal import ROUND_HALF_EVEN, Decimal, localcontext
+from decimal import ROUND_HALF_EVEN, Decimal, DecimalException, localcontext
 
 from cyclescope.domain.entities.industry_signal import (
     IndustrySignalObservation,
@@ -11,10 +11,12 @@ from cyclescope.domain.entities.industry_signal import (
 )
 from cyclescope.domain.entities.industry_signal_aggregate import (
     AggregateInputRole,
+    AggregateScopeRole,
     AggregateStatus,
     AggregationOperation,
     AggregationPolicyCode,
     IndustrySignalAggregateContributor,
+    IndustrySignalAggregateScope,
     IndustrySignalAggregateSnapshot,
     IndustrySignalAggregationPolicy,
 )
@@ -29,6 +31,8 @@ from cyclescope.domain.exceptions import DomainValidationError
 CALCULATION_VERSION = 1
 _RESULT_QUANTUM = Decimal("0.000000000001")
 _MAX_INTEGER_DIGITS = 26
+_MAX_AGGREGATION_CONTRIBUTORS = 100_000
+_SUM_CONTEXT_PRECISION = 43  # 38 input digits + 5 carry digits at the size limit.
 _FLOW_TYPES = frozenset(
     {
         IndustrySignalType.PRODUCTION,
@@ -88,6 +92,10 @@ def validate_aggregation_region_scope(
     """Validate explicit membership and provable non-overlap without expansion."""
     if not constituents:
         raise DomainValidationError("At least one constituent region is required.")
+    if len(constituents) > _MAX_AGGREGATION_CONTRIBUTORS:
+        raise DomainValidationError(
+            "Requested aggregation scope exceeds 100,000 regions."
+        )
     codes = [region.region_code for region in constituents]
     if len(codes) != len(set(codes)):
         raise DomainValidationError("Duplicate constituent region codes are invalid.")
@@ -177,6 +185,8 @@ def calculate_industry_signal_aggregate(
     calculated_at: datetime,
     expected_contributor_count: int | None,
     requested_source_id: int | None = None,
+    aggregate_region_id: int,
+    constituent_regions: tuple[Region, ...],
 ) -> IndustrySignalAggregateSnapshot:
     """Calculate one aggregate from already PIT-selected Domain observations."""
     if as_of.tzinfo is None or as_of.utcoffset() is None:
@@ -194,6 +204,27 @@ def calculate_industry_signal_aggregate(
         raise DomainValidationError(
             "Expected contributor count cannot be less than selected constituents."
         )
+    if expected_contributor_count is not None and (
+        expected_contributor_count > _MAX_AGGREGATION_CONTRIBUTORS
+    ):
+        raise DomainValidationError(
+            "Expected contributor count exceeds the 100,000-region limit."
+        )
+    if len(constituent_region_codes) > _MAX_AGGREGATION_CONTRIBUTORS:
+        raise DomainValidationError(
+            "Requested aggregation scope exceeds 100,000 regions."
+        )
+    if aggregate_region_id < 1:
+        raise DomainValidationError("aggregate_region_id must be positive.")
+    if (
+        tuple(region.region_code for region in constituent_regions)
+        != constituent_region_codes
+    ):
+        raise DomainValidationError(
+            "Constituent region identities do not match request codes."
+        )
+    if any(region.id is None or region.id < 1 for region in constituent_regions):
+        raise DomainValidationError("Constituent regions require persisted identities.")
     allowed_units = {
         IndustrySignalType.INVENTORY: {
             IndustrySignalUnit.TONNE,
@@ -293,6 +324,10 @@ def calculate_industry_signal_aggregate(
     expected_regions = set(constituent_region_codes)
     if any(row.region_code not in expected_regions for row in selected):
         raise DomainValidationError("An observation is outside the selected regions.")
+    if any(row.region_code not in expected_regions for row in capacities):
+        raise DomainValidationError(
+            "A capacity observation is outside the selected regions."
+        )
     if policy.operation is AggregationOperation.CAPACITY_WEIGHTED_AVERAGE:
         value, contributors, missing, actual_count, source_id = _weighted_value(
             selected, capacities, constituent_region_codes
@@ -383,6 +418,32 @@ def calculate_industry_signal_aggregate(
         missing_reasons=tuple(dict.fromkeys(missing)),
         validation_warnings=(),
         contributors=contributors,
+        aggregate_region_id=aggregate_region_id,
+        requested_scopes=tuple(
+            sorted(
+                (
+                    IndustrySignalAggregateScope(
+                        aggregate_region_id,
+                        aggregate_region_code,
+                        AggregateScopeRole.AGGREGATE,
+                    ),
+                    *(
+                        IndustrySignalAggregateScope(
+                            region.id or 0,
+                            region.region_code,
+                            AggregateScopeRole.CONSTITUENT,
+                        )
+                        for region in constituent_regions
+                    ),
+                ),
+                key=lambda scope: (
+                    scope.role.value,
+                    scope.region_code,
+                    scope.region_id,
+                ),
+            )
+        ),
+        scope_complete=True,
     )
 
 
@@ -525,7 +586,17 @@ def _sum_value(
         contributors.append(
             _contributor(row, AggregateInputRole.MEASURE, included, reason)
         )
-    total = _checked_result(sum(values, Decimal(0))) if values else None
+    if values:
+        try:
+            with localcontext() as context:
+                context.prec = _SUM_CONTEXT_PRECISION
+                total = _checked_result(sum(values, Decimal(0)))
+        except DecimalException as exc:
+            raise DomainValidationError(
+                "Decimal SUM failed at supported precision."
+            ) from exc
+    else:
+        total = None
     return (
         total,
         tuple(contributors),
@@ -589,13 +660,19 @@ def _weighted_value(
             _contributor(capacity, AggregateInputRole.CAPACITY_WEIGHT, True, None)
         )
     if weighted:
-        with localcontext() as context:
-            context.prec = 60
-            denominator = sum((weight for _, weight in weighted), Decimal(0))
-            numerator = sum(
-                (utilization * weight for utilization, weight in weighted), Decimal(0)
-            )
-            total = _checked_result(numerator / denominator)
+        try:
+            with localcontext() as context:
+                context.prec = 60
+                denominator = sum((weight for _, weight in weighted), Decimal(0))
+                numerator = sum(
+                    (utilization * weight for utilization, weight in weighted),
+                    Decimal(0),
+                )
+                total = _checked_result(numerator / denominator)
+        except DecimalException as exc:
+            raise DomainValidationError(
+                "Decimal capacity-weighted calculation failed."
+            ) from exc
     else:
         total = None
     source_id = measures[0].source_id if measures else None
@@ -603,9 +680,16 @@ def _weighted_value(
 
 
 def _checked_result(value: Decimal) -> Decimal:
-    with localcontext() as context:
-        context.prec = 60
-        rounded = value.quantize(_RESULT_QUANTUM, rounding=ROUND_HALF_EVEN)
+    if not value.is_finite():
+        raise DomainValidationError("Aggregate result must be a finite Decimal.")
+    try:
+        with localcontext() as context:
+            context.prec = 60
+            rounded = value.quantize(_RESULT_QUANTUM, rounding=ROUND_HALF_EVEN)
+    except DecimalException as exc:
+        raise DomainValidationError(
+            "Aggregate result cannot fit NUMERIC(38, 12)."
+        ) from exc
     integer_digits = max(rounded.adjusted() + 1, 0) if rounded else 0
     if integer_digits > _MAX_INTEGER_DIGITS:
         raise DomainValidationError("Aggregate exceeds NUMERIC(38, 12) precision.")

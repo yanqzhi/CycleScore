@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -51,6 +52,10 @@ class IndustrySignalAggregateModel(TimestampMixin, Base):
         ),
         CheckConstraint(
             "minimum_coverage BETWEEN 0 AND 1", name="aggregate_minimum_coverage"
+        ),
+        CheckConstraint(
+            "scope_complete = 0 OR aggregate_region_id IS NOT NULL",
+            name="aggregate_complete_scope_identity",
         ),
         CheckConstraint(
             "status IN ('AVAILABLE','PARTIAL','INSUFFICIENT_DATA')",
@@ -99,6 +104,12 @@ class IndustrySignalAggregateModel(TimestampMixin, Base):
     signal_type: Mapped[str] = mapped_column(String(32), nullable=False)
     temporal_kind: Mapped[str] = mapped_column(String(12), nullable=False)
     aggregate_region_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    aggregate_region_id: Mapped[int | None] = mapped_column(
+        ForeignKey("regions.id", ondelete="RESTRICT")
+    )
+    scope_complete: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
     source_id: Mapped[int | None] = mapped_column(
         ForeignKey("data_sources.id", ondelete="RESTRICT")
     )
@@ -124,6 +135,38 @@ class IndustrySignalAggregateModel(TimestampMixin, Base):
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(8, 7))
     missing_reasons: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     validation_warnings: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+
+
+class IndustrySignalAggregateScopeModel(TimestampMixin, Base):
+    """Persisted requested aggregate scope identities in deterministic roles."""
+
+    __tablename__ = "industry_signal_aggregate_scopes"
+    __table_args__ = (
+        UniqueConstraint(
+            "aggregate_id", "region_id", "scope_role", name="uq_signal_aggregate_scope"
+        ),
+        CheckConstraint(
+            "scope_role IN ('AGGREGATE','CONSTITUENT')", name="aggregate_scope_role"
+        ),
+        Index(
+            "ix_signal_aggregate_scopes_order",
+            "aggregate_id",
+            "scope_role",
+            "region_code",
+            "region_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    aggregate_id: Mapped[int] = mapped_column(
+        ForeignKey("industry_signal_aggregates.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    region_id: Mapped[int] = mapped_column(
+        ForeignKey("regions.id", ondelete="RESTRICT"), nullable=False
+    )
+    region_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope_role: Mapped[str] = mapped_column(String(16), nullable=False)
 
 
 class IndustrySignalAggregateContributorModel(TimestampMixin, Base):

@@ -127,3 +127,12 @@ availability/publication metadata, value, and classification references.
 Foreign keys use RESTRICT. The repository flushes parent and contributors in the
 caller-owned transaction and exposes no update/delete contract. Downgrade drops
 only these new tables. See `INDUSTRY_SIGNAL_AGGREGATION_SPEC.md`.
+
+Migration `0024_industry_signal_aggregate_scopes` adds the optional aggregate
+region foreign key, a `scope_complete` compatibility marker, and a normalized
+scope table containing aggregate and constituent region IDs, codes, and roles.
+Existing snapshots are not assigned inferred constituents: known aggregate
+identities are backfilled while old scopes remain incomplete. New snapshots
+persist every requested constituent, including regions without eligible
+observations. Downgrade removes the new scope table and added columns while
+leaving Sprint 17 snapshots and contributor records from 0023 intact.

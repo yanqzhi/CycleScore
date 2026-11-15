@@ -38,6 +38,24 @@ class AggregateInputRole(StrEnum):
     CAPACITY_WEIGHT = "CAPACITY_WEIGHT"
 
 
+class AggregateScopeRole(StrEnum):
+    AGGREGATE = "AGGREGATE"
+    CONSTITUENT = "CONSTITUENT"
+
+
+@dataclass(frozen=True, slots=True)
+class IndustrySignalAggregateScope:
+    """One structurally persisted region in the requested aggregate scope."""
+
+    region_id: int
+    region_code: str
+    role: AggregateScopeRole
+
+    def __post_init__(self) -> None:
+        if self.region_id < 1 or not self.region_code.strip():
+            raise DomainValidationError("Aggregate scope region is invalid.")
+
+
 @dataclass(frozen=True, slots=True)
 class IndustrySignalAggregationPolicy:
     policy_code: AggregationPolicyCode
@@ -128,6 +146,9 @@ class IndustrySignalAggregateSnapshot:
     signal_type: IndustrySignalType
     temporal_kind: IndustrySignalTemporalKind
     aggregate_region_code: str
+    aggregate_region_id: int | None
+    requested_scopes: tuple[IndustrySignalAggregateScope, ...]
+    scope_complete: bool
     source_id: int | None
     unit_code: IndustrySignalUnit
     currency_code: str | None
@@ -213,6 +234,59 @@ class IndustrySignalAggregateSnapshot:
             raise DomainValidationError("minimum_coverage supports at most 7 decimals.")
         if not self.aggregate_region_code.strip():
             raise DomainValidationError("aggregate_region_code is required.")
+        if self.aggregate_region_id is not None and self.aggregate_region_id < 1:
+            raise DomainValidationError("aggregate_region_id must be positive.")
+        aggregate_scopes = tuple(
+            scope
+            for scope in self.requested_scopes
+            if scope.role is AggregateScopeRole.AGGREGATE
+        )
+        constituent_scopes = tuple(
+            scope
+            for scope in self.requested_scopes
+            if scope.role is AggregateScopeRole.CONSTITUENT
+        )
+        if self.scope_complete:
+            if self.aggregate_region_id is None or len(aggregate_scopes) != 1:
+                raise DomainValidationError(
+                    "Complete scope requires one aggregate region identity."
+                )
+            if not constituent_scopes:
+                raise DomainValidationError(
+                    "Complete scope requires requested constituent regions."
+                )
+            aggregate_scope = aggregate_scopes[0]
+            if (
+                aggregate_scope.region_id != self.aggregate_region_id
+                or aggregate_scope.region_code != self.aggregate_region_code
+            ):
+                raise DomainValidationError(
+                    "Stored aggregate scope does not match snapshot identity."
+                )
+            ids = [scope.region_id for scope in constituent_scopes]
+            codes = [scope.region_code for scope in constituent_scopes]
+            if len(ids) != len(set(ids)) or len(codes) != len(set(codes)):
+                raise DomainValidationError(
+                    "Requested constituent scopes must be unique."
+                )
+            expected_order = tuple(
+                sorted(
+                    self.requested_scopes,
+                    key=lambda scope: (
+                        scope.role.value,
+                        scope.region_code,
+                        scope.region_id,
+                    ),
+                )
+            )
+            if self.requested_scopes != expected_order:
+                raise DomainValidationError(
+                    "Requested scopes must be deterministically ordered."
+                )
+        elif self.requested_scopes and self.aggregate_region_id is None:
+            raise DomainValidationError(
+                "Legacy scope rows require an aggregate region identity."
+            )
         if self.policy_version < 1 or self.calculation_version < 1:
             raise DomainValidationError(
                 "Policy and calculation versions must be positive."
@@ -225,6 +299,49 @@ class IndustrySignalAggregateSnapshot:
             )
         if self.actual_contributor_count < 0:
             raise DomainValidationError("actual_contributor_count cannot be negative.")
+        included_measurement_regions = [
+            contributor.region_code
+            for contributor in self.contributors
+            if contributor.included and contributor.role is AggregateInputRole.MEASURE
+        ]
+        if len(included_measurement_regions) != len(set(included_measurement_regions)):
+            raise DomainValidationError(
+                "A region may contribute one included measurement only."
+            )
+        if self.actual_contributor_count != len(included_measurement_regions):
+            raise DomainValidationError(
+                "actual_contributor_count must equal included measurement regions."
+            )
+        if self.scope_complete:
+            requested_codes = {scope.region_code for scope in constituent_scopes}
+            if not set(included_measurement_regions).issubset(requested_codes):
+                raise DomainValidationError(
+                    "Included measurement provenance is outside requested scope."
+                )
+            if any(
+                contributor.included and contributor.region_code not in requested_codes
+                for contributor in self.contributors
+            ):
+                raise DomainValidationError(
+                    "Included provenance is outside requested scope."
+                )
+        if self.expected_contributor_count is not None:
+            if self.actual_contributor_count > self.expected_contributor_count:
+                raise DomainValidationError(
+                    "Actual contributors exceed expected count."
+                )
+            expected_coverage = (
+                Decimal(self.actual_contributor_count)
+                / Decimal(self.expected_contributor_count)
+            ).quantize(Decimal("0.0000001"))
+            if self.coverage_ratio != expected_coverage:
+                raise DomainValidationError(
+                    "Coverage does not match contributor counts."
+                )
+        elif self.coverage_ratio is not None:
+            raise DomainValidationError(
+                "Coverage must be unknown without an expected count."
+            )
         for name, value in (
             ("coverage_ratio", self.coverage_ratio),
             ("confidence", self.confidence),
@@ -248,6 +365,36 @@ class IndustrySignalAggregateSnapshot:
             raise DomainValidationError("AVAILABLE requires complete known coverage.")
         if self.status is AggregateStatus.PARTIAL and self.coverage_ratio == Decimal(1):
             raise DomainValidationError("PARTIAL cannot have complete coverage.")
+        if self.status is AggregateStatus.INSUFFICIENT_DATA and self.value is not None:
+            raise DomainValidationError("INSUFFICIENT_DATA cannot expose a value.")
+        if (
+            self.status is AggregateStatus.AVAILABLE
+            and self.actual_contributor_count == 0
+        ):
+            raise DomainValidationError(
+                "AVAILABLE requires included measurement regions."
+            )
+        if (
+            self.status is AggregateStatus.INSUFFICIENT_DATA
+            and self.actual_contributor_count > 0
+            and (
+                self.coverage_ratio is None
+                or self.coverage_ratio >= self.minimum_coverage
+            )
+        ):
+            raise DomainValidationError(
+                "INSUFFICIENT_DATA conflicts with adequate known coverage."
+            )
+        if (
+            self.status is AggregateStatus.PARTIAL
+            and self.expected_contributor_count is not None
+            and (
+                self.coverage_ratio is None
+                or self.coverage_ratio < self.minimum_coverage
+                or self.coverage_ratio >= Decimal(1)
+            )
+        ):
+            raise DomainValidationError("PARTIAL conflicts with known coverage.")
         if self.value is not None and not self.value.is_finite():
             raise DomainValidationError("Aggregate value must be finite.")
         if self.temporal_kind is IndustrySignalTemporalKind.PERIOD:

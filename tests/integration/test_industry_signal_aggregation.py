@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from cyclescope.application.dto.industry_signal import (
@@ -39,7 +39,9 @@ from cyclescope.domain.entities.region import (
 )
 from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.infrastructure.database.models.industry_signal_aggregate import (
+    IndustrySignalAggregateContributorModel,
     IndustrySignalAggregateModel,
+    IndustrySignalAggregateScopeModel,
 )
 from cyclescope.infrastructure.database.repositories.industry_signal import (
     SQLAlchemyIndustrySignalObservationRepository,
@@ -63,7 +65,7 @@ PERIOD_START = date(2025, 3, 1)
 PERIOD_END = date(2025, 3, 31)
 
 
-def _setup(session: Session):
+def _setup(session: Session, *, inactive_japan: bool = False):
     industries = IndustrySqlAlchemyRepository(session)
     sub_industries = SubIndustrySqlAlchemyRepository(session)
     sources = DataSourceSqlAlchemyRepository(session)
@@ -73,7 +75,9 @@ def _setup(session: Session):
     industry = industries.create(Industry(code="MATERIALS", name="Materials"))
     source = sources.create(DataSource("SOURCE_1", "Source 1", "test"))
     world = regions.create(Region("WORLD", "World", RegionType.GLOBAL))
-    jp = regions.create(Region("JP", "Japan", RegionType.COUNTRY))
+    jp = regions.create(
+        Region("JP", "Japan", RegionType.COUNTRY, is_active=not inactive_japan)
+    )
     us = regions.create(Region("US", "United States", RegionType.COUNTRY))
     relationships.create(RegionRelationship(world.id or 0, jp.id or 0))
     relationships.create(RegionRelationship(world.id or 0, us.id or 0))
@@ -171,6 +175,15 @@ def test_sqlite_aggregate_uses_pit_revisions_and_roundtrips_provenance(
     assert [c.revision_number for c in fetched.contributors] == [1, 1]
     assert all(c.available_at <= AS_OF for c in fetched.contributors)
     assert all(c.collected_at > AS_OF for c in fetched.contributors)
+    assert [
+        (scope.role.value, scope.region_code) for scope in fetched.requested_scopes
+    ] == [
+        ("AGGREGATE", "WORLD"),
+        ("CONSTITUENT", "JP"),
+        ("CONSTITUENT", "US"),
+    ]
+    assert fetched.scope_complete is True
+    assert fetched.aggregate_region_id is not None
     assert len(repo.list_by_industry(industry.id or 0)) == 1
 
 
@@ -189,6 +202,8 @@ def test_snapshot_and_contributors_follow_caller_rollback(session: Session) -> N
             aggregate.execute(_request(industry.id or 0, source.id or 0))
             raise RuntimeError("rollback")
     assert session.query(IndustrySignalAggregateModel).count() == 0
+    assert session.query(IndustrySignalAggregateScopeModel).count() == 0
+    assert session.query(IndustrySignalAggregateContributorModel).count() == 0
 
 
 def test_recalculation_is_append_only_and_source_ambiguity_is_not_mixed(
@@ -253,21 +268,114 @@ def test_overlap_is_rejected_before_aggregate_creation(session: Session) -> None
         )
 
 
+def test_missing_constituent_is_preserved_in_retrieved_requested_scope(
+    session: Session,
+) -> None:
+    aggregate, importer, repo, industry, source = _setup(session)
+    importer.execute(
+        ImportIndustrySignalsRequest(
+            (_input(industry.id or 0, source.id or 0, "JP", "10"),)
+        )
+    )
+    snapshot = aggregate.execute(_request(industry.id or 0, source.id or 0)).snapshot
+    fetched = repo.get_by_id(snapshot.id or 0)
+    assert fetched is not None
+    assert fetched.actual_contributor_count == 1
+    assert fetched.status.value == "INSUFFICIENT_DATA"
+    assert tuple(scope.region_code for scope in fetched.requested_scopes) == (
+        "WORLD",
+        "JP",
+        "US",
+    )
+    assert any("US" in reason for reason in fetched.missing_reasons)
+
+
+def test_explicit_inactive_region_remains_usable_without_historical_inference(
+    session: Session,
+) -> None:
+    aggregate, importer, repo, industry, source = _setup(session, inactive_japan=True)
+    importer.execute(
+        ImportIndustrySignalsRequest(
+            (
+                _input(industry.id or 0, source.id or 0, "JP", "10"),
+                _input(industry.id or 0, source.id or 0, "US", "20"),
+            )
+        )
+    )
+    result = aggregate.execute(_request(industry.id or 0, source.id or 0)).snapshot
+    assert result.value == Decimal("30.000000000000")
+    assert repo.get_by_id(result.id or 0).scope_complete is True  # type: ignore[union-attr]
+
+
 def test_aggregate_migration_upgrade_and_downgrade_is_additive(tmp_path: Path) -> None:
     path = tmp_path / "aggregate_migration.db"
     config = Config(str(Path.cwd() / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", f"sqlite:///{path}")
-    command.upgrade(config, "0022_region_membership_relationships")
+    command.upgrade(config, "0023_industry_signal_aggregates")
     engine = create_database_engine(f"sqlite:///{path}")
     before = set(inspect(engine).get_table_names())
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO industries "
+                "(id, code, name, is_active, created_at, updated_at) "
+                "VALUES (701, 'LEGACY', 'Legacy', 1, CURRENT_TIMESTAMP, "
+                "CURRENT_TIMESTAMP)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO regions "
+                "(id, region_code, name, region_type, is_active, created_at, "
+                "updated_at) "
+                "VALUES (702, 'WORLD', 'World', 'GLOBAL', 1, CURRENT_TIMESTAMP, "
+                "CURRENT_TIMESTAMP)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO industry_signal_aggregates "
+                "(id, industry_id, signal_type, temporal_kind, aggregate_region_code, "
+                "unit_code, observation_date, as_of, calculated_at, policy_code, "
+                "policy_version, calculation_version, operation, minimum_coverage, "
+                "status, expected_contributor_count, actual_contributor_count, "
+                "coverage_ratio, missing_reasons, validation_warnings, created_at, "
+                "updated_at) "
+                "VALUES (703, 701, 'INVENTORY', 'POINT', 'WORLD', 'TONNE', "
+                "'2025-01-31', '2025-02-01', '2025-02-01', 'INVENTORY_SUM', 1, 1, "
+                "'SUM', 0.8, 'INSUFFICIENT_DATA', 1, 0, 0, '[]', '[]', "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
     command.upgrade(config, "head")
     after = set(inspect(engine).get_table_names())
     assert "industry_signal_aggregates" in after
     assert "industry_signal_aggregate_contributors" in after
+    assert "industry_signal_aggregate_scopes" in after
     assert before < after
-    command.downgrade(config, "0022_region_membership_relationships")
+    with engine.connect() as connection:
+        assert connection.execute(
+            text(
+                "SELECT aggregate_region_id, scope_complete "
+                "FROM industry_signal_aggregates WHERE id=703"
+            )
+        ).one() == (702, 0)
+        assert connection.execute(
+            text(
+                "SELECT aggregate_id, region_id, region_code, scope_role "
+                "FROM industry_signal_aggregate_scopes WHERE aggregate_id=703"
+            )
+        ).one() == (703, 702, "WORLD", "AGGREGATE")
+    command.downgrade(config, "0023_industry_signal_aggregates")
     downgraded = set(inspect(engine).get_table_names())
-    assert "industry_signal_aggregates" not in downgraded
-    assert "industry_signal_aggregate_contributors" not in downgraded
-    assert before <= downgraded
+    assert "industry_signal_aggregate_scopes" not in downgraded
+    assert "industry_signal_aggregates" in downgraded
+    assert "industry_signal_aggregate_contributors" in downgraded
+    with engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT id FROM industry_signal_aggregates WHERE id=703")
+            ).scalar_one()
+            == 703
+        )
     engine.dispose()

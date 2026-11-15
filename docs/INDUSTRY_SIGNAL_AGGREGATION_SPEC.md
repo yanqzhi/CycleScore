@@ -15,7 +15,7 @@ The caller selects a policy code and version. Version 1 supports:
 | CAPACITY | CAPACITY_SUM | Sum compatible scopes on one reference date |
 | CAPACITY_UTILIZATION | CAPACITY_WEIGHTED_UTILIZATION | Capacity weighted average |
 
-Events (`CAPACITY_ADDITION`, `CAPACITY_CLOSURE_ANNOUNCED`, and `CAPACITY_CLOSURE_COMPLETED`) are rejected. Utilization is only `sum(capacity_i * utilization_i) / sum(capacity_i)` with positive capacity for each included region. Missing capacity is never replaced by an arithmetic mean. Calculations use `Decimal`, retain 12 places, round half-even at the result boundary, and reject results outside `NUMERIC(38, 12)`.
+Events (`CAPACITY_ADDITION`, `CAPACITY_CLOSURE_ANNOUNCED`, and `CAPACITY_CLOSURE_COMPLETED`) are rejected. Utilization is only `sum(capacity_i * utilization_i) / sum(capacity_i)` with positive capacity for each included region. Missing capacity is never replaced by an arithmetic mean. Calculations use `Decimal`, retain 12 places, round half-even at the result boundary, and reject results outside `NUMERIC(38, 12)`. At most 100,000 requested contributors are supported; SUM uses a 43-digit context (38 input digits plus five carry digits) to remain exact up to that bound before final output validation.
 
 ## Compatibility and region scope
 
@@ -38,3 +38,9 @@ Migration `0023_industry_signal_aggregates` adds a snapshot table and contributo
 ## Limitations
 
 V1 has four explicit policies and policy version 1 only. Multi-scope overlap outside country-level constituents cannot be proven and is rejected. There is no inferred expected universe, confidence score, currency/unit conversion, event identity, automatic region inference, source blending, or live provider.
+
+## Scope persistence and inactive regions
+
+Each new snapshot stores its aggregate region ID/code and a scope-table entry for the aggregate region plus every explicitly requested constituent, ordered by role and then region code/ID. Missing observations do not remove a requested region from this scope; they remain distinguishable from actual contributors. Retrieval uses saved scope rows and never traverses current relationships. Migration `0024_industry_signal_aggregate_scopes` backfills only known aggregate-region identities for old snapshots. Earlier snapshots did not persist their constituent sets, so those records are marked `scope_complete = false` and their constituent scope is intentionally not inferred.
+
+Inactive regions remain usable when explicitly selected. Region Master has no effective-dated activity history, so the system cannot establish whether a region was active at historical `as_of`; v1 makes no such assumption and records selected IDs as supplied.

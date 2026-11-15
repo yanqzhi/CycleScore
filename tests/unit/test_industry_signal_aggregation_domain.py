@@ -1,5 +1,6 @@
 """Unit tests for provider-neutral signal aggregation policies and calculations."""
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -22,6 +23,7 @@ from cyclescope.domain.entities.region import (
 )
 from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.domain.services.industry_signal_aggregation import (
+    _checked_result,
     calculate_industry_signal_aggregate,
     resolve_aggregation_policy,
     validate_aggregation_region_scope,
@@ -105,6 +107,11 @@ def _calculate(
         sub_industry_id=None,
         aggregate_region_code="WORLD",
         constituent_region_codes=codes,
+        aggregate_region_id=100,
+        constituent_regions=tuple(
+            Region(code, code, RegionType.COUNTRY, id=index)
+            for index, code in enumerate(codes, start=1)
+        ),
         unit_code=unit,
         currency_code=currency,
         observation_date=POINT_DATE if point else None,
@@ -139,6 +146,52 @@ def test_flow_sum_requires_exact_period_and_tracks_contributors() -> None:
     assert result.value == Decimal("30.000000000000")
     assert result.status is AggregateStatus.AVAILABLE
     assert [item.observation_id for item in result.contributors] == [1, 2]
+
+
+def test_sum_preserves_max_precision_and_rounds_only_at_output_boundary() -> None:
+    half_max = "49999999999999999999999999.999999999999"
+    result = _calculate(
+        AggregationPolicyCode.INVENTORY_SUM,
+        IndustrySignalType.INVENTORY,
+        (
+            _obs(value=half_max),
+            _obs(region="US", value=half_max, row_id=2),
+        ),
+        codes=("JP", "US"),
+        expected=2,
+    )
+    assert result.value == Decimal("99999999999999999999999999.999999999998")
+
+    large = "12345678901234567890.123456789012"
+    rows = tuple(
+        _obs(region=f"R{index:04d}", value=large, row_id=index + 1)
+        for index in range(100)
+    )
+    codes = tuple(row.region_code for row in rows)
+    accumulated = _calculate(
+        AggregationPolicyCode.INVENTORY_SUM,
+        IndustrySignalType.INVENTORY,
+        rows,
+        codes=codes,
+        expected=len(codes),
+    )
+    assert accumulated.value == Decimal("1234567890123456789012.345678901200")
+
+
+def test_sum_rejects_output_overflow_after_exact_intermediate_arithmetic() -> None:
+    maximum = "99999999999999999999999999.999999999999"
+    with pytest.raises(DomainValidationError, match=r"NUMERIC\(38, 12\)"):
+        _calculate(
+            AggregationPolicyCode.INVENTORY_SUM,
+            IndustrySignalType.INVENTORY,
+            (_obs(value=maximum), _obs(region="US", value=maximum, row_id=2)),
+            codes=("JP", "US"),
+            expected=2,
+        )
+    with pytest.raises(DomainValidationError, match="finite"):
+        _checked_result(Decimal("NaN"))
+    with pytest.raises(DomainValidationError, match="cannot fit"):
+        _checked_result(Decimal("1E+1000"))
 
 
 def test_pit_filtering_precedes_revision_validation_and_excludes_future_rows() -> None:
@@ -404,6 +457,11 @@ def test_weighted_utilization_uses_capacity_not_arithmetic_mean() -> None:
         "MEASURE",
         "CAPACITY_WEIGHT",
     ]
+    assert result.actual_contributor_count == 2
+    with pytest.raises(DomainValidationError, match="actual_contributor_count"):
+        replace(result, actual_contributor_count=4)
+    with pytest.raises(DomainValidationError, match="Coverage"):
+        replace(result, coverage_ratio=Decimal("0.5"))
 
 
 def test_missing_capacity_disables_weighted_utilization() -> None:
@@ -421,6 +479,26 @@ def test_missing_capacity_disables_weighted_utilization() -> None:
     )
     assert result.status is AggregateStatus.INSUFFICIENT_DATA
     assert result.value is None
+
+
+def test_capacity_observations_outside_requested_regions_are_rejected() -> None:
+    measure = _obs(
+        IndustrySignalType.CAPACITY_UTILIZATION,
+        "JP",
+        "50",
+        unit=IndustrySignalUnit.PERCENTAGE,
+    )
+    outside_capacity = _obs(IndustrySignalType.CAPACITY, "MX", "10")
+    with pytest.raises(DomainValidationError, match="outside the selected regions"):
+        _calculate(
+            AggregationPolicyCode.CAPACITY_WEIGHTED_UTILIZATION,
+            IndustrySignalType.CAPACITY_UTILIZATION,
+            (measure,),
+            codes=("JP",),
+            expected=1,
+            unit=IndustrySignalUnit.PERCENTAGE,
+            capacities=(outside_capacity,),
+        )
 
 
 def test_region_scope_rejects_overlap_and_does_not_traverse_membership() -> None:

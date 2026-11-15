@@ -40,10 +40,12 @@ from cyclescope.domain.entities.industry_signal import (
 )
 from cyclescope.domain.entities.industry_signal_aggregate import (
     AggregateInputRole,
+    AggregateScopeRole,
     AggregateStatus,
     AggregationOperation,
     AggregationPolicyCode,
     IndustrySignalAggregateContributor,
+    IndustrySignalAggregateScope,
     IndustrySignalAggregateSnapshot,
     IndustrySignalAggregationPolicy,
 )
@@ -136,10 +138,12 @@ __all__ = [
     "IndustrySignalType",
     "IndustrySignalUnit",
     "AggregateInputRole",
+    "AggregateScopeRole",
     "AggregateStatus",
     "AggregationOperation",
     "AggregationPolicyCode",
     "IndustrySignalAggregateContributor",
+    "IndustrySignalAggregateScope",
     "IndustrySignalAggregationPolicy",
     "IndustrySignalAggregateSnapshot",
     "IndustryClassificationMapping",

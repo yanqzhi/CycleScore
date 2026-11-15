@@ -122,6 +122,8 @@ class AggregateIndustrySignals:
             calculated_at=datetime.now(UTC),
             expected_contributor_count=request.expected_contributor_count,
             requested_source_id=request.source_id,
+            aggregate_region_id=aggregate_scope.id or 0,
+            constituent_regions=constituents,
         )
         return AggregateIndustrySignalsResult(self.aggregates.create(snapshot))
 
