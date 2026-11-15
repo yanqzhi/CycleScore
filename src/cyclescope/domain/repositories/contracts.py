@@ -22,6 +22,7 @@ from cyclescope.domain.entities.financial_data import (
     FinancialStatementItem,
 )
 from cyclescope.domain.entities.fx_rate import FxRate
+from cyclescope.domain.entities.industry_inventory import IndustryInventorySnapshot
 from cyclescope.domain.entities.industry_signal import (
     IndustrySignalObservation,
     IndustrySignalType,
@@ -211,6 +212,24 @@ class IndustrySignalAggregateRepository(ABC):
         as_of: datetime | None = None,
     ) -> list[IndustrySignalAggregateSnapshot]:
         """List immutable snapshots, optionally filtered by type and cutoff."""
+
+
+class IndustryInventoryRepository(ABC):
+    """Append-only industry inventory cycle analysis snapshots."""
+
+    @abstractmethod
+    def create(self, snapshot: IndustryInventorySnapshot) -> IndustryInventorySnapshot:
+        """Append analysis and exact scope/input provenance; caller owns transaction."""
+
+    @abstractmethod
+    def get_by_id(self, snapshot_id: int) -> IndustryInventorySnapshot | None:
+        """Retrieve one immutable analysis with stored scope and input references."""
+
+    @abstractmethod
+    def list_by_industry(
+        self, industry_id: int, *, as_of: datetime | None = None
+    ) -> list[IndustryInventorySnapshot]:
+        """List append-only analysis history, optionally with a PIT cutoff."""
 
 
 class ClassificationSchemeRepository(ABC):

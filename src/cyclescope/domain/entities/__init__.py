@@ -32,6 +32,14 @@ from cyclescope.domain.entities.financial_data import (
 )
 from cyclescope.domain.entities.fx_rate import FxRate
 from cyclescope.domain.entities.industry import Industry
+from cyclescope.domain.entities.industry_inventory import (
+    IndustryInventoryClassification,
+    IndustryInventoryConfig,
+    IndustryInventoryInputReference,
+    IndustryInventorySnapshot,
+    IndustryInventoryStatus,
+    IndustryInventoryTrend,
+)
 from cyclescope.domain.entities.industry_signal import (
     IndustrySignalObservation,
     IndustrySignalTemporalKind,
@@ -146,6 +154,12 @@ __all__ = [
     "IndustrySignalAggregateScope",
     "IndustrySignalAggregationPolicy",
     "IndustrySignalAggregateSnapshot",
+    "IndustryInventoryClassification",
+    "IndustryInventoryConfig",
+    "IndustryInventoryInputReference",
+    "IndustryInventorySnapshot",
+    "IndustryInventoryStatus",
+    "IndustryInventoryTrend",
     "IndustryClassificationMapping",
     "MappingMethod",
     "Region",

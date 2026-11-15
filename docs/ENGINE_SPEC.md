@@ -83,6 +83,17 @@ observation key. A query with multiple eligible sources must explicitly select
 one. No inventory engine, supply-demand score, capacity model, or industry-cycle
 analysis is implemented in Sprint 15. See
 [INDUSTRY_SIGNAL_SPEC.md](INDUSTRY_SIGNAL_SPEC.md).
+
+## Industry Inventory Engine (Sprint 18)
+
+Sprint 18 analyzes persisted Sprint 17 aggregates without re-aggregating raw
+signals. Inventory remains a point-in-time balance; production and shipments
+are compared only for exactly matching period boundaries. YoY uses the exact
+calendar anniversary, and absent observations remain unavailable. Source,
+classification, unit, currency, region scope, and PIT provenance must match.
+The engine appends versioned descriptive cycle classifications with separate
+coverage and confidence. Thresholds and precedence are documented in
+[INDUSTRY_INVENTORY_ENGINE_SPEC.md](INDUSTRY_INVENTORY_ENGINE_SPEC.md).
 # Value Score
 
 Sprint 12 introduces a versioned, six-component 0–100 Value Score. Lower

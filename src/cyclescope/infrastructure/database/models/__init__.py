@@ -17,6 +17,11 @@ from cyclescope.infrastructure.database.models.financial_data import (
     FinancialStatementItemModel,
     FinancialStatementModel,
 )
+from cyclescope.infrastructure.database.models.industry_inventory import (
+    IndustryInventoryInputModel,
+    IndustryInventoryScopeModel,
+    IndustryInventorySnapshotModel,
+)
 from cyclescope.infrastructure.database.models.industry_signal import (
     IndustrySignalObservationModel,
 )
@@ -99,6 +104,9 @@ __all__ = [
     "IndustrySignalAggregateModel",
     "IndustrySignalAggregateContributorModel",
     "IndustrySignalAggregateScopeModel",
+    "IndustryInventorySnapshotModel",
+    "IndustryInventoryInputModel",
+    "IndustryInventoryScopeModel",
     "ClassificationSchemeModel",
     "ClassificationVersionModel",
     "IndustryClassificationMappingModel",
