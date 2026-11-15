@@ -113,8 +113,9 @@ Application resolution requires an explicit scheme, version, code, and
 effective date; mapping validity and version validity are both checked. No
 fuzzy matching or version fallback is performed. Industry Signal observations
 may retain nullable references to the exact classification version and mapping
-used at import; legacy rows remain unchanged. Region relationships are modeled
-as a multi-parent DAG because economic and market regions overlap. Queries walk
-explicit edges and do not aggregate observations. Repositories flush only;
-callers own transaction boundaries. See `CLASSIFICATION_MASTER_SPEC.md` and
-`REGION_MASTER_SPEC.md`.
+used at import; legacy rows remain unchanged. Region relationships distinguish
+`CONTAINS` (the geographic hierarchy) from `MEMBER_OF` (country membership in
+economic/market regions). Only containment edges are traversed for ancestry and
+checked for cycles; membership is queried separately and never triggers
+aggregation. Repositories flush only; callers own transaction boundaries. See
+`CLASSIFICATION_MASTER_SPEC.md` and `REGION_MASTER_SPEC.md`.

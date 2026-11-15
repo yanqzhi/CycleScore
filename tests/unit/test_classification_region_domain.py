@@ -42,39 +42,34 @@ def test_classification_entities_validate_effective_ranges_and_confidence() -> N
         ClassificationScheme("bad code", "Scheme", "Publisher")
 
 
-def test_region_dag_supports_multiple_parents_and_deterministic_paths() -> None:
+def test_region_containment_paths_are_deterministic() -> None:
     global_region = Region("GLOBAL", "Global", RegionType.GLOBAL, id=1)
     asia = Region("ASIA", "Asia", RegionType.CONTINENT, id=2)
-    europe = Region("EUROPE", "Europe", RegionType.CONTINENT, id=3)
-    market = Region("EUR_MARKET", "Euro market", RegionType.MARKET_REGION, id=4)
-    regions = {item.id or 0: item for item in (global_region, asia, europe, market)}
+    japan = Region("JP", "Japan", RegionType.COUNTRY, id=3)
+    regions = {item.id or 0: item for item in (global_region, asia, japan)}
     edges = (
         RegionRelationship(1, 2),
-        RegionRelationship(1, 3),
-        RegionRelationship(2, 4),
-        RegionRelationship(3, 4),
+        RegionRelationship(2, 3),
     )
 
     validate_relationship(regions, edges)
 
-    paths = ancestor_paths(4, regions, edges)
+    paths = ancestor_paths(3, regions, edges)
     assert [[item.region_code for item in path] for path in paths] == [
-        ["GLOBAL", "ASIA"],
-        ["GLOBAL", "EUROPE"],
+        ["GLOBAL", "ASIA"]
     ]
     assert [item.region_code for item in descendants(1, regions, edges)] == [
         "ASIA",
-        "EUROPE",
-        "EUR_MARKET",
+        "JP",
     ]
-    assert is_descendant(4, 1, regions, edges)
+    assert is_descendant(3, 1, regions, edges)
     assert ancestor_paths(1, regions, edges) == ()
 
 
 @pytest.mark.parametrize(
     ("parent_id", "child_id", "message"),
     [
-        (3, 1, "cannot contain"),
+        (3, 1, "not allowed"),
     ],
 )
 def test_region_rejects_incompatible_edges(parent_id, child_id, message) -> None:
@@ -98,7 +93,7 @@ def test_region_rejects_cycle_and_duplicate_relationship() -> None:
         2: Region("ASIA", "Asia", RegionType.CONTINENT, id=2),
         3: Region("JP", "Japan", RegionType.COUNTRY, id=3),
     }
-    with pytest.raises(DomainValidationError, match="cannot contain"):
+    with pytest.raises(DomainValidationError, match="cycles"):
         validate_relationship(
             regions,
             (RegionRelationship(1, 2), RegionRelationship(2, 3)),

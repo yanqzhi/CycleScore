@@ -109,3 +109,10 @@ null or both present. No historical row is backfilled, and downgrade removes
 only these columns and the five new master tables. See
 [CLASSIFICATION_MASTER_SPEC.md](CLASSIFICATION_MASTER_SPEC.md) and
 [REGION_MASTER_SPEC.md](REGION_MASTER_SPEC.md).
+
+Migration `0022_region_membership_relationships` extends the region edge
+constraint from `CONTAINS` to `CONTAINS` or `MEMBER_OF`; it preserves existing
+region and relationship IDs. `CONTAINS` edges alone participate in geographic
+hierarchy traversal and cycle detection. `MEMBER_OF` links countries to
+economic/market regions and is queried separately. Downgrade refuses to remove
+the new contract if `MEMBER_OF` rows remain, avoiding silent data loss.

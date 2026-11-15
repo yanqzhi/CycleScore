@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from cyclescope.domain.entities.region import (
     Region,
     RegionRelationship,
+    RegionRelationshipType,
     RegionType,
 )
 
@@ -20,8 +21,11 @@ class CreateRegionRequest:
 
 @dataclass(frozen=True, slots=True)
 class CreateRegionRelationshipRequest:
+    """For MEMBER_OF, parent is the group and child is the member region."""
+
     parent_region_id: int
     child_region_id: int
+    relationship_type: RegionRelationshipType = RegionRelationshipType.CONTAINS
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +47,18 @@ class GetRegionResult:
 class GetRegionParentsResult:
     region: Region
     parents: tuple[Region, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class GetRegionMembersResult:
+    region: Region
+    members: tuple[Region, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class GetRegionMembershipsResult:
+    region: Region
+    memberships: tuple[Region, ...]
 
 
 @dataclass(frozen=True, slots=True)

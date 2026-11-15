@@ -36,6 +36,8 @@ from cyclescope.application.use_cases.industry_signals import ImportIndustrySign
 from cyclescope.application.use_cases.region_master import (
     GetRegionAncestorPaths,
     GetRegionDescendants,
+    GetRegionMembers,
+    GetRegionMemberships,
     RegisterRegion,
     RegisterRegionRelationship,
 )
@@ -46,7 +48,12 @@ from cyclescope.domain.entities.industry_signal import (
     IndustrySignalType,
     IndustrySignalUnit,
 )
-from cyclescope.domain.entities.region import Region, RegionType
+from cyclescope.domain.entities.region import (
+    Region,
+    RegionRelationship,
+    RegionRelationshipType,
+    RegionType,
+)
 from cyclescope.domain.entities.sub_industry import SubIndustry
 from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.infrastructure.database.models.industry_signal import (
@@ -226,7 +233,7 @@ def test_mapping_registration_rejects_overlapping_validity(session: Session) -> 
         )
 
 
-def test_region_hierarchy_supports_multiple_parents_and_rollback(
+def test_region_hierarchy_traversal_and_rollback(
     session: Session,
 ) -> None:
     regions = SQLAlchemyRegionRepository(session)
@@ -239,40 +246,156 @@ def test_region_hierarchy_supports_multiple_parents_and_rollback(
     asia = register_region.execute(
         CreateRegionRequest("ASIA", "Asia", RegionType.CONTINENT)
     ).region
-    europe = register_region.execute(
-        CreateRegionRequest("EUROPE", "Europe", RegionType.CONTINENT)
+    japan = register_region.execute(
+        CreateRegionRequest("JP", "Japan", RegionType.COUNTRY)
     ).region
-    market = register_region.execute(
-        CreateRegionRequest("EUR_MARKET", "Euro Market", RegionType.MARKET_REGION)
-    ).region
-    assert global_region and asia and europe and market
+    assert global_region and asia and japan
     register_edge.execute(
         CreateRegionRelationshipRequest(global_region.id or 0, asia.id or 0)
     )
-    register_edge.execute(
-        CreateRegionRelationshipRequest(global_region.id or 0, europe.id or 0)
-    )
-    register_edge.execute(CreateRegionRelationshipRequest(asia.id or 0, market.id or 0))
-    register_edge.execute(
-        CreateRegionRelationshipRequest(europe.id or 0, market.id or 0)
-    )
+    register_edge.execute(CreateRegionRelationshipRequest(asia.id or 0, japan.id or 0))
 
     query = GetRegionAncestorPaths(regions, relationships)
-    result = query.execute(GetRegionHierarchyRequest("EUR_MARKET"))
+    result = query.execute(GetRegionHierarchyRequest("JP"))
     assert [[item.region_code for item in path] for path in result.paths] == [
-        ["GLOBAL", "ASIA"],
-        ["GLOBAL", "EUROPE"],
+        ["GLOBAL", "ASIA"]
     ]
     descendant_result = GetRegionDescendants(regions, relationships).execute(
         GetRegionHierarchyRequest("GLOBAL")
     )
     assert {item.region_code for item in descendant_result.descendants} == {
         "ASIA",
-        "EUROPE",
-        "EUR_MARKET",
+        "JP",
     }
     session.rollback()
     assert regions.list() == []
+
+
+def test_region_membership_is_distinct_from_geographic_containment(
+    session: Session,
+) -> None:
+    regions = SQLAlchemyRegionRepository(session)
+    relationships = SQLAlchemyRegionRelationshipRepository(session)
+    add_region = RegisterRegion(regions)
+    add_relationship = RegisterRegionRelationship(regions, relationships)
+
+    global_region = add_region.execute(
+        CreateRegionRequest("GLOBAL", "Global", RegionType.GLOBAL)
+    ).region
+    asia = add_region.execute(
+        CreateRegionRequest("ASIA", "Asia", RegionType.CONTINENT)
+    ).region
+    japan = add_region.execute(
+        CreateRegionRequest("JP", "Japan", RegionType.COUNTRY)
+    ).region
+    europe = add_region.execute(
+        CreateRegionRequest("EUROPE", "Europe", RegionType.CONTINENT)
+    ).region
+    germany = add_region.execute(
+        CreateRegionRequest("DE", "Germany", RegionType.COUNTRY)
+    ).region
+    france = add_region.execute(
+        CreateRegionRequest("FR", "France", RegionType.COUNTRY)
+    ).region
+    eurozone = add_region.execute(
+        CreateRegionRequest("EUROZONE", "Eurozone", RegionType.ECONOMIC_REGION)
+    ).region
+    market = add_region.execute(
+        CreateRegionRequest("EU_MARKET", "EU Market", RegionType.MARKET_REGION)
+    ).region
+    assert all((global_region, asia, japan, europe, germany, france, eurozone, market))
+
+    for parent, child in (
+        (global_region, asia),
+        (asia, japan),
+        (global_region, europe),
+        (europe, germany),
+        (europe, france),
+    ):
+        add_relationship.execute(
+            CreateRegionRelationshipRequest(parent.id or 0, child.id or 0)
+        )
+    for member in (germany, france):
+        add_relationship.execute(
+            CreateRegionRelationshipRequest(
+                eurozone.id or 0,
+                member.id or 0,
+                RegionRelationshipType.MEMBER_OF,
+            )
+        )
+    add_relationship.execute(
+        CreateRegionRelationshipRequest(
+            market.id or 0, germany.id or 0, RegionRelationshipType.MEMBER_OF
+        )
+    )
+
+    japan_ancestors = GetRegionAncestorPaths(regions, relationships).execute(
+        GetRegionHierarchyRequest("JP")
+    )
+    assert [[node.region_code for node in path] for path in japan_ancestors.paths] == [
+        ["GLOBAL", "ASIA"]
+    ]
+    asia_descendants = GetRegionDescendants(regions, relationships).execute(
+        GetRegionHierarchyRequest("ASIA")
+    )
+    assert [node.region_code for node in asia_descendants.descendants] == ["JP"]
+    eurozone_members = GetRegionMembers(regions, relationships).execute(
+        GetRegionHierarchyRequest("EUROZONE")
+    )
+    assert [node.region_code for node in eurozone_members.members] == ["DE", "FR"]
+    germany_memberships = GetRegionMemberships(regions, relationships).execute(
+        GetRegionHierarchyRequest("DE")
+    )
+    assert [node.region_code for node in germany_memberships.memberships] == [
+        "EUROZONE",
+        "EU_MARKET",
+    ]
+
+    with pytest.raises(DomainValidationError, match="already exists"):
+        add_relationship.execute(
+            CreateRegionRelationshipRequest(
+                eurozone.id or 0,
+                germany.id or 0,
+                RegionRelationshipType.MEMBER_OF,
+            )
+        )
+
+
+def test_region_relationship_validation_rejects_bad_types_and_containment_cycles(
+    session: Session,
+) -> None:
+    regions = SQLAlchemyRegionRepository(session)
+    relationships = SQLAlchemyRegionRelationshipRepository(session)
+    add_region = RegisterRegion(regions)
+    add_relationship = RegisterRegionRelationship(regions, relationships)
+    world = add_region.execute(
+        CreateRegionRequest("GLOBAL", "Global", RegionType.GLOBAL)
+    ).region
+    asia = add_region.execute(
+        CreateRegionRequest("ASIA", "Asia", RegionType.CONTINENT)
+    ).region
+    japan = add_region.execute(
+        CreateRegionRequest("JP", "Japan", RegionType.COUNTRY)
+    ).region
+    assert world and asia and japan
+    add_relationship.execute(
+        CreateRegionRelationshipRequest(world.id or 0, asia.id or 0)
+    )
+    add_relationship.execute(
+        CreateRegionRelationshipRequest(asia.id or 0, japan.id or 0)
+    )
+    with pytest.raises(DomainValidationError, match="cannot contain cycles"):
+        add_relationship.execute(
+            CreateRegionRelationshipRequest(japan.id or 0, world.id or 0)
+        )
+    with pytest.raises(DomainValidationError, match="not allowed"):
+        add_relationship.execute(
+            CreateRegionRelationshipRequest(
+                japan.id or 0, asia.id or 0, RegionRelationshipType.MEMBER_OF
+            )
+        )
+    with pytest.raises(DomainValidationError, match="relationship_type"):
+        RegionRelationship(1, 2, "UNKNOWN")  # type: ignore[arg-type]
 
 
 def test_region_database_rejects_duplicate_codes_and_invalid_foreign_keys(
@@ -364,4 +487,75 @@ def test_migration_preserves_existing_master_and_signal_rows(tmp_path: Path) -> 
         ).one()
         assert tuple(signal) == (73, 71, "legacy-region")
         assert "regions" not in inspect(connection).get_table_names()
+    engine.dispose()
+
+
+def test_membership_migration_preserves_edge_ids_and_guards_downgrade(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "region_membership_migration.db"
+    config = Config(str(Path.cwd() / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "0021_classification_and_region_masters")
+    engine = create_database_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO regions (id, region_code, name, region_type, "
+                "is_active, created_at, updated_at) "
+                "VALUES (:id, :code, :name, :type, 1, CURRENT_TIMESTAMP, "
+                "CURRENT_TIMESTAMP)"
+            ),
+            [
+                {"id": 801, "code": "GLOBAL", "name": "Global", "type": "GLOBAL"},
+                {"id": 802, "code": "ASIA", "name": "Asia", "type": "CONTINENT"},
+                {"id": 803, "code": "JP", "name": "Japan", "type": "COUNTRY"},
+                {
+                    "id": 804,
+                    "code": "ECON",
+                    "name": "Economic region",
+                    "type": "ECONOMIC_REGION",
+                },
+            ],
+        )
+        connection.execute(
+            text(
+                "INSERT INTO region_relationships (id, parent_region_id, "
+                "child_region_id, relationship_type, created_at, updated_at) "
+                "VALUES (805, 801, 802, 'CONTAINS', CURRENT_TIMESTAMP, "
+                "CURRENT_TIMESTAMP)"
+            )
+        )
+    command.upgrade(config, "head")
+    with engine.begin() as connection:
+        old_edge = connection.execute(
+            text(
+                "SELECT id, parent_region_id, child_region_id, relationship_type "
+                "FROM region_relationships WHERE id=805"
+            )
+        ).one()
+        assert tuple(old_edge) == (805, 801, 802, "CONTAINS")
+        connection.execute(
+            text(
+                "INSERT INTO region_relationships (id, parent_region_id, "
+                "child_region_id, relationship_type, created_at, updated_at) "
+                "VALUES (806, 804, 803, 'MEMBER_OF', CURRENT_TIMESTAMP, "
+                "CURRENT_TIMESTAMP)"
+            )
+        )
+    with pytest.raises(RuntimeError, match="Cannot downgrade"):
+        command.downgrade(config, "0021_classification_and_region_masters")
+    with engine.begin() as connection:
+        assert (
+            connection.execute(
+                text("SELECT id FROM region_relationships WHERE id=805")
+            ).scalar_one()
+            == 805
+        )
+        connection.execute(text("DELETE FROM region_relationships WHERE id=806"))
+    command.downgrade(config, "0021_classification_and_region_masters")
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT id, relationship_type FROM region_relationships WHERE id=805")
+        ).one() == (805, "CONTAINS")
     engine.dispose()

@@ -25,35 +25,37 @@ class RegionType(StrEnum):
 
 
 class RegionRelationshipType(StrEnum):
+    """Explicit region edges; membership is not geographic containment."""
+
     CONTAINS = "CONTAINS"
+    MEMBER_OF = "MEMBER_OF"
 
 
-_ALLOWED_CHILD_TYPES: dict[RegionType, frozenset[RegionType]] = {
-    RegionType.GLOBAL: frozenset(
-        {
-            RegionType.CONTINENT,
-            RegionType.COUNTRY,
-            RegionType.ECONOMIC_REGION,
-            RegionType.MARKET_REGION,
-        }
-    ),
-    RegionType.CONTINENT: frozenset(
-        {RegionType.COUNTRY, RegionType.ECONOMIC_REGION, RegionType.MARKET_REGION}
-    ),
-    RegionType.COUNTRY: frozenset(
-        {RegionType.ECONOMIC_REGION, RegionType.MARKET_REGION}
-    ),
-    RegionType.ECONOMIC_REGION: frozenset({RegionType.MARKET_REGION}),
+_ALLOWED_CONTAINMENT: dict[RegionType, frozenset[RegionType]] = {
+    RegionType.GLOBAL: frozenset({RegionType.CONTINENT, RegionType.COUNTRY}),
+    RegionType.CONTINENT: frozenset({RegionType.COUNTRY}),
+    RegionType.COUNTRY: frozenset(),
+    RegionType.ECONOMIC_REGION: frozenset(),
     RegionType.MARKET_REGION: frozenset(),
     RegionType.UNSPECIFIED: frozenset(),
 }
 
 
-def validate_region_parent_type(parent: RegionType, child: RegionType) -> None:
-    """Reject region edges that contradict the declared region types."""
-    if child not in _ALLOWED_CHILD_TYPES[parent]:
+def validate_region_relationship_types(
+    parent: RegionType, child: RegionType, relationship_type: RegionRelationshipType
+) -> None:
+    """Enforce endpoint types independently for each relationship meaning."""
+    if relationship_type is RegionRelationshipType.CONTAINS:
+        allowed = child in _ALLOWED_CONTAINMENT[parent]
+    else:
+        allowed = (
+            parent in {RegionType.ECONOMIC_REGION, RegionType.MARKET_REGION}
+            and child is RegionType.COUNTRY
+        )
+    if not allowed:
         raise DomainValidationError(
-            f"A {parent.value} region cannot contain a {child.value} region."
+            f"{relationship_type.value} is not allowed from {parent.value} "
+            f"to {child.value}."
         )
 
 
@@ -102,6 +104,8 @@ class Region:
 
 @dataclass(frozen=True, slots=True)
 class RegionRelationship:
+    """A region edge; for MEMBER_OF, child is a member of parent."""
+
     parent_region_id: int
     child_region_id: int
     relationship_type: RegionRelationshipType = RegionRelationshipType.CONTAINS

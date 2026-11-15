@@ -7,13 +7,19 @@ from cyclescope.application.dto.region import (
     GetRegionAncestorPathsResult,
     GetRegionDescendantsResult,
     GetRegionHierarchyRequest,
+    GetRegionMembershipsResult,
+    GetRegionMembersResult,
     GetRegionParentsResult,
     GetRegionRequest,
     GetRegionResult,
     IsRegionDescendantRequest,
     ValidateRegionHierarchyResult,
 )
-from cyclescope.domain.entities.region import Region, RegionRelationship
+from cyclescope.domain.entities.region import (
+    Region,
+    RegionRelationship,
+    RegionRelationshipType,
+)
 from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.domain.repositories.contracts import (
     RegionRelationshipRepository,
@@ -60,6 +66,7 @@ class RegisterRegionRelationship:
         relationship = RegionRelationship(
             parent_region_id=request.parent_region_id,
             child_region_id=request.child_region_id,
+            relationship_type=request.relationship_type,
         )
         if self.relationships.exists(relationship):
             raise DomainValidationError("Region relationship already exists.")
@@ -98,6 +105,7 @@ class GetRegionParents:
                 (
                     parent
                     for edge in self.relationships.list_by_child(region.id or 0)
+                    if edge.relationship_type is RegionRelationshipType.CONTAINS
                     if (parent := self.regions.get_by_id(edge.parent_region_id))
                     is not None
                 ),
@@ -105,6 +113,62 @@ class GetRegionParents:
             )
         )
         return GetRegionParentsResult(region, parents)
+
+
+class GetRegionMembers:
+    """List direct members of an economic or market region."""
+
+    def __init__(
+        self,
+        regions: RegionRepository,
+        relationships: RegionRelationshipRepository,
+    ) -> None:
+        self.regions = regions
+        self.relationships = relationships
+
+    def execute(self, request: GetRegionHierarchyRequest) -> GetRegionMembersResult:
+        region = _region_by_code(self.regions, request.region_code)
+        members = tuple(
+            sorted(
+                (
+                    member
+                    for edge in self.relationships.list_by_parent(region.id or 0)
+                    if edge.relationship_type is RegionRelationshipType.MEMBER_OF
+                    if (member := self.regions.get_by_id(edge.child_region_id))
+                    is not None
+                ),
+                key=lambda item: item.region_code,
+            )
+        )
+        return GetRegionMembersResult(region, members)
+
+
+class GetRegionMemberships:
+    """List economic/market regions containing this member country."""
+
+    def __init__(
+        self,
+        regions: RegionRepository,
+        relationships: RegionRelationshipRepository,
+    ) -> None:
+        self.regions = regions
+        self.relationships = relationships
+
+    def execute(self, request: GetRegionHierarchyRequest) -> GetRegionMembershipsResult:
+        region = _region_by_code(self.regions, request.region_code)
+        memberships = tuple(
+            sorted(
+                (
+                    parent
+                    for edge in self.relationships.list_by_child(region.id or 0)
+                    if edge.relationship_type is RegionRelationshipType.MEMBER_OF
+                    if (parent := self.regions.get_by_id(edge.parent_region_id))
+                    is not None
+                ),
+                key=lambda item: item.region_code,
+            )
+        )
+        return GetRegionMembershipsResult(region, memberships)
 
 
 class GetRegionDescendants:

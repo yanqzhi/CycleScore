@@ -45,7 +45,8 @@ class RegionRelationshipModel(TimestampMixin, Base):
         ),
         CheckConstraint("parent_region_id != child_region_id", name="region_not_self"),
         CheckConstraint(
-            "relationship_type = 'CONTAINS'", name="region_relationship_type"
+            "relationship_type IN ('CONTAINS','MEMBER_OF')",
+            name="region_relationship_type",
         ),
         Index("ix_region_relationships_child", "child_region_id"),
         Index("ix_region_relationships_parent", "parent_region_id"),
