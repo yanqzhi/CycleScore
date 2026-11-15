@@ -20,12 +20,17 @@ from cyclescope.domain.entities import (
 )
 from cyclescope.infrastructure.database.initialize import (
     INITIAL_INDUSTRIES,
+    INITIAL_INVENTORY_FINANCIAL_ITEMS,
     seed_industries,
+    seed_inventory_financial_items,
     seed_valuation_metrics,
 )
 from cyclescope.infrastructure.database.models import (
     CompanyIndustryExposureModel,
     CompanyModel,
+    DataSourceModel,
+    FinancialItemMappingModel,
+    FinancialItemModel,
     IndustryModel,
     SubIndustryModel,
     ValuationMetricModel,
@@ -73,6 +78,44 @@ def test_valuation_metric_seed_is_repeatable_and_preserves_existing_values(
     )
 
 
+def test_inventory_financial_item_seed_is_repeatable_and_preserves_mappings(
+    session: Session,
+) -> None:
+    seed_inventory_financial_items(session)
+    session.commit()
+    items = {row.item_code: row for row in session.query(FinancialItemModel).all()}
+    assert set(items) == {row[0] for row in INITIAL_INVENTORY_FINANCIAL_ITEMS}
+    inventory_id = items["INVENTORIES"].id
+    items["INVENTORIES"].item_name = "User inventory label"
+    source = DataSourceModel(
+        code="INVENTORY_MAPPING_TEST",
+        name="Mapping test",
+        provider_type="test",
+    )
+    session.add(source)
+    session.flush()
+    mapping = FinancialItemMappingModel(
+        source_id=source.id,
+        source_item_code="INV",
+        source_item_name="Inventory",
+        financial_item_id=inventory_id,
+        accounting_standard="IFRS",
+    )
+    session.add(mapping)
+    session.commit()
+
+    seed_inventory_financial_items(session)
+    session.commit()
+    assert session.query(FinancialItemModel).count() == 2
+    assert (
+        session.get(FinancialItemModel, inventory_id).item_name
+        == "User inventory label"
+    )
+    assert (
+        session.query(FinancialItemMappingModel).one().financial_item_id == inventory_id
+    )
+
+
 def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
     """Seed a migrated database repeatedly without overwriting master data."""
     database_path = tmp_path / "migration.db"  # type: ignore[operator]
@@ -98,7 +141,7 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
             ).scalar_one()
-            == "0017_cycle_scores"
+            == "0018_inventory_snapshots"
         )
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
         assert (
@@ -225,6 +268,42 @@ def test_cycle_score_migration_downgrade_and_upgrade_are_safe(
     command.upgrade(config, "head")
     with engine.connect() as connection:
         assert "cycle_scores" in inspect(connection).get_table_names()
+    engine.dispose()
+
+
+def test_inventory_migration_downgrade_and_upgrade_are_safe(
+    tmp_path: object,
+) -> None:
+    database_path = tmp_path / "inventory_migration.db"  # type: ignore[operator]
+    config = Config(str(Path.cwd() / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "head")
+    engine = create_database_engine(f"sqlite:///{database_path}")
+    with engine.connect() as connection:
+        assert "inventory_snapshots" in inspect(connection).get_table_names()
+        columns = {
+            column["name"]
+            for column in inspect(connection).get_columns("inventory_snapshots")
+        }
+        assert {
+            "company_id",
+            "as_of",
+            "fiscal_year",
+            "inventory_turnover",
+            "dio",
+            "trend",
+            "data_coverage",
+            "confidence",
+            "config_snapshot",
+            "input_references",
+        } <= columns
+    command.downgrade(config, "0017_cycle_scores")
+    with engine.connect() as connection:
+        assert "inventory_snapshots" not in inspect(connection).get_table_names()
+        assert "cycle_scores" in inspect(connection).get_table_names()
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        assert "inventory_snapshots" in inspect(connection).get_table_names()
     engine.dispose()
 
 

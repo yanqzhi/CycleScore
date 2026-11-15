@@ -18,6 +18,7 @@ All tables use integer primary keys and UTC `created_at` / `updated_at` timestam
 | `daily_prices` | Security and source FKs (`RESTRICT`); decimal OHLC and adjusted close; integer volume; observation/publication dates; availability and collection timestamps; revision. Unique security/date/source/revision. |
 | `fx_rates` | Source FK (`RESTRICT`); decimal quote-per-base rate; currency pair; observation/publication dates; availability and collection timestamps; revision. Unique pair/date/source/revision. |
 | `cycle_scores` | Append-only company and optional Security snapshots with PIT cutoff, score/phase/coverage/confidence, source/currency, normalized-result FK, versioned configuration, component JSON, and exact annual statement input references. |
+| `inventory_snapshots` | Append-only company-level annual inventory metrics with PIT cutoff, fiscal-year values, trend/status, coverage/confidence, configuration, and statement-line provenance. |
 
 SQLite foreign-key enforcement is enabled on every connection. Alembic owns schema changes; initialization upgrades to `head` and inserts missing initial industries without overwriting existing rows. No market time-series tables are included in Sprint 01.
 
@@ -67,3 +68,18 @@ delete methods on the Domain repository contract. The create operation flushes
 inside the caller's transaction; it never commits. Downgrade drops only the new
 table and index. Historical score inputs are stored as stable JSON references
 because they span several source tables and immutable calculation types.
+
+# Inventory snapshots (Sprint 14)
+
+Migration `0018_inventory_snapshots` adds the append-only `inventory_snapshots`
+table. Numeric values use `NUMERIC(38, 12)`; input references, unavailable
+reasons, and the calculation configuration are JSON snapshots. Company,
+optional Security, and source references use RESTRICT foreign keys. No unique
+constraint blocks recalculation. The repository exposes create and read only,
+and flushes without committing; the caller owns transaction boundaries.
+Downgrade removes only this new table and indexes. See
+[INVENTORY_ENGINE_SPEC.md](INVENTORY_ENGINE_SPEC.md).
+
+Initialization also inserts missing `INVENTORIES` and `COST_OF_GOODS_SOLD`
+financial item definitions. It never updates existing item definitions or
+source mappings.

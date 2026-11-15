@@ -18,6 +18,7 @@ from cyclescope.domain.entities.financial_data import (
 )
 from cyclescope.domain.entities.fx_rate import FxRate
 from cyclescope.domain.entities.ingestion import IngestionRun, RawDataRecord
+from cyclescope.domain.entities.inventory import InventorySnapshot
 from cyclescope.domain.entities.listing import Listing
 from cyclescope.domain.entities.listing_status_event import ListingStatusEvent
 from cyclescope.domain.entities.normalized_earnings import (
@@ -506,3 +507,17 @@ class CycleScoreRepository(ABC):
         self, company_id: int, *, as_of: datetime | None = None
     ) -> list[CycleScore]:
         """Read immutable company snapshots optionally restricted by cutoff."""
+
+
+class InventorySnapshotRepository(ABC):
+    """Append-only company-level inventory calculation snapshots."""
+
+    @abstractmethod
+    def create(self, result: InventorySnapshot) -> InventorySnapshot:
+        """Append a calculation snapshot; caller owns the transaction."""
+
+    @abstractmethod
+    def list_by_company(
+        self, company_id: int, *, as_of: datetime | None = None
+    ) -> list[InventorySnapshot]:
+        """Read snapshots without changing historical records."""

@@ -57,6 +57,19 @@ remain future extensions. See [CYCLE_SCORE_SPEC.md](CYCLE_SCORE_SPEC.md).
 Normalized historical earnings use only eligible annual FY statements from the explicit `as_of` view. Coverage/confidence and peak/trough candidates are analytical metadata, not a cycle-stage score. Normalized PER and EV/EBITDA reuse the existing valuation formulas; see [NORMALIZED_EARNINGS_SPEC.md](NORMALIZED_EARNINGS_SPEC.md).
 
 Historical valuation percentiles consume the latest eligible Sprint 09 snapshot per trading date and metric. They use an exchange trading calendar for coverage, retain each source-specific series unless the request chooses source IDs, and compare only matching currency, unit, financial-period basis, and calculation version. A selected financial source must exactly match the snapshot's complete source set; mixed and missing source metadata is explicitly excluded, while unsupported multi-source sets without selection are rejected. Daily observations are retained (not silently resampled); persistence records excluded snapshot reasons and original snapshot links. Same-date source-ineligible snapshots do not supersede eligible source-matched snapshots. Missing historical normalized results are rebuilt at each source snapshot's historical `as_of` using Sprint 10 and its existing PIT repository rules. See [HISTORICAL_VALUATION_PERCENTILE_SPEC.md](HISTORICAL_VALUATION_PERCENTILE_SPEC.md).
+
+## Inventory Engine (Sprint 14)
+
+The inventory engine reuses visible annual FY financial statement rows. It
+calculates closing/opening/average inventory, YoY change and growth, annual
+COGS turnover, and 365-day DIO. Same-source, accounting-standard,
+consolidation-scope, currency, fiscal-year, and period-end compatibility is
+required before combining balance-sheet and income-statement inputs. Missing or
+invalid inputs remain `None` with reasons. Descriptive trend uses contiguous
+annual inventory observations and versioned growth thresholds; it does not
+infer excess inventory or demand deterioration. PIT availability, exact source
+revisions, and calculation input references are retained in append-only
+snapshots. See [INVENTORY_ENGINE_SPEC.md](INVENTORY_ENGINE_SPEC.md).
 # Value Score
 
 Sprint 12 introduces a versioned, six-component 0–100 Value Score. Lower

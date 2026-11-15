@@ -21,7 +21,8 @@ Configuration uses Pydantic Settings. Environment variables use the `CYCLESCOPE_
 
 ## Database
 
-Initialize or upgrade schema and idempotently seed the seven initial industries:
+Initialize or upgrade schema and idempotently seed the seven initial industries,
+valuation metrics, and standard inventory financial items:
 
 ```powershell
 cyclescope-init-db
@@ -102,6 +103,15 @@ proxy, not a complete industry-cycle model. It does not yet analyze inventory,
 supply and demand, commodity prices, or capacity clearing. See
 [CYCLE_SCORE_SPEC.md](docs/CYCLE_SCORE_SPEC.md) for formulas, phase rules,
 coverage, provenance, and limitations.
+
+## Company inventory analysis
+
+Inventory Engine v1 calculates annual company-level inventory changes,
+inventory turnover, and days inventory outstanding from point-in-time FY
+financial statements. Trend labels are descriptive only and do not infer
+excess inventory or industry demand conditions. Snapshots are append-only and
+retain their source, revision, and statement-line provenance. See
+[INVENTORY_ENGINE_SPEC.md](docs/INVENTORY_ENGINE_SPEC.md).
 
 ## Generic ingestion pipeline
 

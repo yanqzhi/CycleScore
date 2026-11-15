@@ -6,6 +6,9 @@ from cyclescope.infrastructure.database.repositories.cycle_score import (
 from cyclescope.infrastructure.database.repositories.data_quality import (
     SQLAlchemyDataQualityRepository,
 )
+from cyclescope.infrastructure.database.repositories.inventory import (
+    SQLAlchemyInventorySnapshotRepository,
+)
 from cyclescope.infrastructure.database.repositories.market_data import (
     SQLAlchemyDailyPriceRepository,
     SQLAlchemyFxRateRepository,
@@ -39,6 +42,7 @@ __all__ = [
     "SQLAlchemyValuationPercentileRepository",
     "SQLAlchemyValueScoreRepository",
     "SQLAlchemyCycleScoreRepository",
+    "SQLAlchemyInventorySnapshotRepository",
 ]
 
 from cyclescope.infrastructure.database.repositories.financial_data import (

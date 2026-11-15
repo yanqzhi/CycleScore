@@ -12,6 +12,7 @@ from cyclescope.infrastructure.database.models.financial_data import (
     FinancialStatementItemModel,
     FinancialStatementModel,
 )
+from cyclescope.infrastructure.database.models.inventory import InventorySnapshotModel
 from cyclescope.infrastructure.database.models.market_data import (
     DailyPriceModel,
     FxRateModel,
@@ -76,6 +77,7 @@ __all__ = [
     "ValuationPercentileInputModel",
     "ValueScoreModel",
     "CycleScoreModel",
+    "InventorySnapshotModel",
 ]
 
 from cyclescope.infrastructure.database.models.ingestion import (

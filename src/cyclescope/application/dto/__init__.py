@@ -4,6 +4,10 @@ from cyclescope.application.dto.cycle_score import (
     CalculateCycleScoreRequest,
     CycleScoreResponse,
 )
+from cyclescope.application.dto.inventory import (
+    CalculateInventoryRequest,
+    CalculateInventoryResponse,
+)
 from cyclescope.application.dto.market_data import (
     FxImportSummary,
     FxRateRequest,
@@ -46,6 +50,8 @@ from cyclescope.application.dto.valuation import (
 __all__ = [
     "CalculateCycleScoreRequest",
     "CycleScoreResponse",
+    "CalculateInventoryRequest",
+    "CalculateInventoryResponse",
     "DataRetrievalStatus",
     "FxObservationAsOfRequest",
     "FxPeriodRequest",

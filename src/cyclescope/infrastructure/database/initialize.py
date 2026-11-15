@@ -1,4 +1,4 @@
-"""Database initialization entry point and idempotent industry seeding."""
+"""Database initialization and idempotent standard master-data seeding."""
 
 import logging
 from pathlib import Path
@@ -7,8 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cyclescope.domain.services.valuation import default_metric_definitions
+from cyclescope.domain.value_objects.financial_data import StatementType, UnitDimension
 from cyclescope.infrastructure.config import get_settings
 from cyclescope.infrastructure.database.models import (
+    FinancialItemModel,
     IndustryModel,
     ValuationMetricModel,
 )
@@ -27,6 +29,24 @@ INITIAL_INDUSTRIES = (
     ("SHIPPING", "Shipping"),
     ("OIL_GAS", "Oil & Gas"),
     ("STEEL", "Steel"),
+)
+INITIAL_INVENTORY_FINANCIAL_ITEMS = (
+    (
+        "INVENTORIES",
+        "Inventories",
+        StatementType.BS.value,
+        "BALANCE_SHEET",
+        UnitDimension.CURRENCY_AMOUNT.value,
+        "Reported closing inventory balance at fiscal year end.",
+    ),
+    (
+        "COST_OF_GOODS_SOLD",
+        "Cost of Goods Sold",
+        StatementType.PL.value,
+        "INCOME_STATEMENT",
+        UnitDimension.CURRENCY_AMOUNT.value,
+        "Reported cost of goods sold for the stated fiscal period.",
+    ),
 )
 
 
@@ -62,6 +82,31 @@ def seed_valuation_metrics(session: Session) -> None:
         )
 
 
+def seed_inventory_financial_items(session: Session) -> None:
+    """Insert missing standardized inventory inputs without overwriting items."""
+    existing = set(session.scalars(select(FinancialItemModel.item_code)).all())
+    session.add_all(
+        FinancialItemModel(
+            item_code=code,
+            item_name=name,
+            statement_type=statement_type,
+            category=category,
+            unit_dimension=unit_dimension,
+            description=description,
+            is_active=True,
+        )
+        for (
+            code,
+            name,
+            statement_type,
+            category,
+            unit_dimension,
+            description,
+        ) in INITIAL_INVENTORY_FINANCIAL_ITEMS
+        if code not in existing
+    )
+
+
 def main() -> None:
     """Run Alembic migrations and seed industries without deleting data."""
     from alembic import command
@@ -79,9 +124,8 @@ def main() -> None:
     with factory.begin() as session:
         seed_industries(session)
         seed_valuation_metrics(session)
-    logger.info(
-        "Database schema is current and initial industry/valuation masters are present."
-    )
+        seed_inventory_financial_items(session)
+    logger.info("Database schema is current and initial master data is present.")
 
 
 if __name__ == "__main__":

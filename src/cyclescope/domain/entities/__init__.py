@@ -27,6 +27,15 @@ from cyclescope.domain.entities.financial_data import (
 from cyclescope.domain.entities.fx_rate import FxRate
 from cyclescope.domain.entities.industry import Industry
 from cyclescope.domain.entities.ingestion import IngestionRun, RawDataRecord
+from cyclescope.domain.entities.inventory import (
+    InventoryAnnualObservation,
+    InventoryConfidence,
+    InventoryConfig,
+    InventoryInputReference,
+    InventorySnapshot,
+    InventoryStatus,
+    InventoryTrend,
+)
 from cyclescope.domain.entities.listing import Listing
 from cyclescope.domain.entities.listing_status_event import ListingStatusEvent
 from cyclescope.domain.entities.normalized_earnings import (
@@ -93,6 +102,13 @@ __all__ = [
     "FinancialStatement",
     "FinancialStatementItem",
     "Industry",
+    "InventoryAnnualObservation",
+    "InventoryConfidence",
+    "InventoryConfig",
+    "InventoryInputReference",
+    "InventorySnapshot",
+    "InventoryStatus",
+    "InventoryTrend",
     "IngestionRun",
     "RawDataRecord",
     "Listing",

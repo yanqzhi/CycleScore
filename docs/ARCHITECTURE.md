@@ -81,3 +81,15 @@ covers both normalized earnings snapshots generated at the requested historical
 cutoff and the Cycle Score row. Sprint 13 is an earnings-cycle proxy only; it
 does not infer complete industry cycles from revenue exposure. See
 `CYCLE_SCORE_SPEC.md`.
+
+# Inventory Engine (Sprint 14)
+
+`CalculateInventory` reuses the existing PIT `GetFinancialStatements` query and
+standardized `INVENTORIES` / `COST_OF_GOODS_SOLD` items. Application assembles
+annual FY observations only and rejects source, accounting-standard,
+consolidation-scope, or currency mixing. The pure Domain service calculates
+inventory level changes, average inventory, turnover, DIO, and a descriptive
+versioned trend. SQLite persistence appends one snapshot per visible FY with
+input statement and line provenance; repositories do not commit. No financial
+input, PIT selection, or existing tables are modified. See
+`INVENTORY_ENGINE_SPEC.md`.
