@@ -1,5 +1,11 @@
 """Domain entities."""
 
+from cyclescope.domain.entities.classification import (
+    ClassificationScheme,
+    ClassificationVersion,
+    IndustryClassificationMapping,
+    MappingMethod,
+)
 from cyclescope.domain.entities.company import Company
 from cyclescope.domain.entities.company_industry_exposure import CompanyIndustryExposure
 from cyclescope.domain.entities.cycle_score import (
@@ -49,6 +55,12 @@ from cyclescope.domain.entities.normalized_earnings import (
     EarningsMetric,
     NormalizedEarningsResult,
 )
+from cyclescope.domain.entities.region import (
+    Region,
+    RegionRelationship,
+    RegionRelationshipType,
+    RegionType,
+)
 from cyclescope.domain.entities.security import Security
 from cyclescope.domain.entities.security_identifier import SecurityIdentifier
 from cyclescope.domain.entities.sub_industry import SubIndustry
@@ -87,6 +99,8 @@ from cyclescope.domain.entities.value_score import (
 __all__ = [
     "Company",
     "CompanyIndustryExposure",
+    "ClassificationScheme",
+    "ClassificationVersion",
     "CyclePhase",
     "CycleScore",
     "CycleScoreComponent",
@@ -112,6 +126,12 @@ __all__ = [
     "IndustrySignalTemporalKind",
     "IndustrySignalType",
     "IndustrySignalUnit",
+    "IndustryClassificationMapping",
+    "MappingMethod",
+    "Region",
+    "RegionRelationship",
+    "RegionRelationshipType",
+    "RegionType",
     "InventoryAnnualObservation",
     "InventoryConfidence",
     "InventoryConfig",

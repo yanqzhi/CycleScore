@@ -9,10 +9,16 @@ from cyclescope.application.dto.industry_signal import (
     ImportIndustrySignalsRequest,
     ImportIndustrySignalsResult,
 )
+from cyclescope.domain.entities.classification import (
+    ClassificationVersion,
+    IndustryClassificationMapping,
+)
 from cyclescope.domain.entities.industry_signal import IndustrySignalObservation
 from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.domain.repositories.contracts import (
+    ClassificationVersionRepository,
     DataSourceRepository,
+    IndustryClassificationMappingRepository,
     IndustryRepository,
     IndustrySignalObservationRepository,
     SubIndustryRepository,
@@ -28,11 +34,15 @@ class ImportIndustrySignals:
         industries: IndustryRepository,
         sub_industries: SubIndustryRepository,
         sources: DataSourceRepository,
+        mappings: IndustryClassificationMappingRepository | None = None,
+        versions: ClassificationVersionRepository | None = None,
     ) -> None:
         self.observations = observations
         self.industries = industries
         self.sub_industries = sub_industries
         self.sources = sources
+        self.mappings = mappings
+        self.versions = versions
 
     def execute(
         self, request: ImportIndustrySignalsRequest
@@ -60,10 +70,44 @@ class ImportIndustrySignals:
                     )
             if self.sources.get_by_id(observation.source_id) is None:
                 raise DomainValidationError("Unknown data source.")
+            if observation.classification_mapping_id is not None:
+                self._validate_mapping_reference(observation)
             if self.observations.exists_revision(observation):
                 raise DomainValidationError("Industry signal revision already exists.")
         stored = tuple(self.observations.create(item) for item in entities)
         return ImportIndustrySignalsResult(stored)
+
+    def _validate_mapping_reference(
+        self, observation: IndustrySignalObservation
+    ) -> None:
+        if self.mappings is None or self.versions is None:
+            raise DomainValidationError(
+                "Classification repositories are required for mapped imports."
+            )
+        mapping: IndustryClassificationMapping | None = self.mappings.get_by_id(
+            observation.classification_mapping_id or 0
+        )
+        version: ClassificationVersion | None = self.versions.get_by_id(
+            observation.classification_version_id or 0
+        )
+        if mapping is None or version is None:
+            raise DomainValidationError("Unknown classification mapping reference.")
+        effective_date = observation.period_end or observation.observation_date
+        if effective_date is None:
+            raise DomainValidationError(
+                "Industry signal effective date is unavailable."
+            )
+        if (
+            mapping.classification_version_id != version.id
+            or mapping.internal_industry_id != observation.industry_id
+            or mapping.internal_sub_industry_id != observation.sub_industry_id
+            or not mapping.is_valid_on(effective_date)
+            or not version.is_effective_on(effective_date)
+        ):
+            raise DomainValidationError(
+                "Classification mapping does not match the signal's internal scope "
+                "or effective date."
+            )
 
 
 class GetIndustrySignals:

@@ -1,5 +1,14 @@
 # Company and security master specification
 
+## External classification and region references
+
+The internal Industry/SubIndustry taxonomy remains the canonical application
+classification. External classification systems are represented separately by
+versioned schemes and effective-dated mappings; region hierarchy is a separate
+multi-parent graph. Neither mapping nor region membership implies automatic
+conversion or aggregation. See [CLASSIFICATION_MASTER_SPEC.md](CLASSIFICATION_MASTER_SPEC.md)
+and [REGION_MASTER_SPEC.md](REGION_MASTER_SPEC.md).
+
 ## Entities and relationships
 
 - **Company** is the issuer or underlying legal/business entity. It has no ticker uniqueness rule and may issue multiple securities.

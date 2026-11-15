@@ -96,6 +96,20 @@ sub-industry. Its downgrade removes only this table and its indexes. Import
 validates industry, sub-industry ownership, source, units, dates, and duplicate
 revisions before inserting. The caller owns commit and rollback.
 
+## Classification and region master integration (Sprint 16)
+
+Existing `industry_id`, `sub_industry_id`, and `region_code` remain unchanged.
+Newly imported mapped observations may include both
+`classification_version_id` and `classification_mapping_id`; the importer
+checks the mapping target and validity on the observation's effective date.
+Those references preserve the exact external crosswalk row. The migration does
+not backfill old observations or infer region ancestors from existing codes.
+Region master edges do not alter signal scope or cause aggregation. Historical
+visibility remains governed by `available_at <= as_of`; classification
+effective dates do not replace availability timestamps or use `collected_at`.
+See [CLASSIFICATION_MASTER_SPEC.md](CLASSIFICATION_MASTER_SPEC.md) and
+[REGION_MASTER_SPEC.md](REGION_MASTER_SPEC.md).
+
 ## Limitations
 
 - No source adapters or live providers are included; these DTOs and use cases
@@ -103,9 +117,9 @@ revisions before inserting. The caller owns commit and rollback.
 - No industry-signal aggregation or compatibility engine is included. Consumers
   must require matching signal type, region, industry/sub-industry, unit,
   currency, and period before comparing observations.
-- Industry classification scheme/version and hierarchical region definitions
-  are not modeled separately. Inputs must already be mapped to current internal
-  master IDs and normalized region codes.
+- Live classification or region data providers, automatic crosswalks, company
+  assignment, and signal aggregation are not included. Mappings and graph edges
+  are curated.
 - A source may publish revisions with changed units or currency; this layer
   preserves the values and metadata without conversion. Consumers must not
   compare incompatible revisions as one series.

@@ -4,6 +4,11 @@ from abc import ABC, abstractmethod
 from datetime import date, datetime
 
 from cyclescope.domain.entities import Industry
+from cyclescope.domain.entities.classification import (
+    ClassificationScheme,
+    ClassificationVersion,
+    IndustryClassificationMapping,
+)
 from cyclescope.domain.entities.company import Company
 from cyclescope.domain.entities.company_industry_exposure import CompanyIndustryExposure
 from cyclescope.domain.entities.cycle_score import CycleScore
@@ -29,6 +34,7 @@ from cyclescope.domain.entities.normalized_earnings import (
     EarningsMetric,
     NormalizedEarningsResult,
 )
+from cyclescope.domain.entities.region import Region, RegionRelationship
 from cyclescope.domain.entities.security import Security
 from cyclescope.domain.entities.security_identifier import SecurityIdentifier
 from cyclescope.domain.entities.sub_industry import SubIndustry
@@ -178,6 +184,94 @@ class IndustrySignalObservationRepository(ABC):
         Apply both the availability cutoff and the observation date/period-end
         cutoff. Revision selection is left to Application after PIT filtering.
         """
+
+
+class ClassificationSchemeRepository(ABC):
+    """Read and append classification scheme identities."""
+
+    @abstractmethod
+    def create(self, scheme: ClassificationScheme) -> ClassificationScheme: ...
+
+    @abstractmethod
+    def get_by_id(self, scheme_id: int) -> ClassificationScheme | None: ...
+
+    @abstractmethod
+    def get_by_code(self, scheme_code: str) -> ClassificationScheme | None: ...
+
+    @abstractmethod
+    def list(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> list[ClassificationScheme]: ...
+
+
+class ClassificationVersionRepository(ABC):
+    """Read and append immutable classification releases."""
+
+    @abstractmethod
+    def create(self, version: ClassificationVersion) -> ClassificationVersion: ...
+
+    @abstractmethod
+    def get_by_id(self, version_id: int) -> ClassificationVersion | None: ...
+
+    @abstractmethod
+    def get_by_scheme_and_code(
+        self, scheme_id: int, version_code: str
+    ) -> ClassificationVersion | None: ...
+
+    @abstractmethod
+    def list_by_scheme(self, scheme_id: int) -> list[ClassificationVersion]: ...
+
+
+class IndustryClassificationMappingRepository(ABC):
+    """Read and append historical external-to-internal classification maps."""
+
+    @abstractmethod
+    def create(
+        self, mapping: IndustryClassificationMapping
+    ) -> IndustryClassificationMapping: ...
+
+    @abstractmethod
+    def get_by_id(self, mapping_id: int) -> IndustryClassificationMapping | None: ...
+
+    @abstractmethod
+    def list_by_version_and_code(
+        self, version_id: int, external_code: str
+    ) -> list[IndustryClassificationMapping]: ...
+
+
+class RegionRepository(ABC):
+    """Read and append stable region identities."""
+
+    @abstractmethod
+    def create(self, region: Region) -> Region: ...
+
+    @abstractmethod
+    def get_by_id(self, region_id: int) -> Region | None: ...
+
+    @abstractmethod
+    def get_by_code(self, region_code: str) -> Region | None: ...
+
+    @abstractmethod
+    def list(self) -> list[Region]: ...
+
+
+class RegionRelationshipRepository(ABC):
+    """Read and append containment edges in the region graph."""
+
+    @abstractmethod
+    def create(self, relationship: RegionRelationship) -> RegionRelationship: ...
+
+    @abstractmethod
+    def exists(self, relationship: RegionRelationship) -> bool: ...
+
+    @abstractmethod
+    def list_all(self) -> list[RegionRelationship]: ...
+
+    @abstractmethod
+    def list_by_parent(self, parent_region_id: int) -> list[RegionRelationship]: ...
+
+    @abstractmethod
+    def list_by_child(self, child_region_id: int) -> list[RegionRelationship]: ...
 
 
 class DailyPriceRepository(ABC):

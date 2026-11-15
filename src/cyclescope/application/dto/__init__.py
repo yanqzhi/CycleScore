@@ -1,5 +1,12 @@
 """Application data transfer objects."""
 
+from cyclescope.application.dto.classification import (
+    CreateClassificationSchemeRequest,
+    CreateClassificationVersionRequest,
+    CreateIndustryClassificationMappingRequest,
+    ResolveIndustryClassificationRequest,
+    ResolveIndustryClassificationResult,
+)
 from cyclescope.application.dto.cycle_score import (
     CalculateCycleScoreRequest,
     CycleScoreResponse,
@@ -46,6 +53,18 @@ from cyclescope.application.dto.market_data_access import (
     SourceDataAvailability,
 )
 from cyclescope.application.dto.normalized_earnings import NormalizedEarningsRequest
+from cyclescope.application.dto.region import (
+    CreateRegionRelationshipRequest,
+    CreateRegionRequest,
+    GetRegionAncestorPathsResult,
+    GetRegionDescendantsResult,
+    GetRegionHierarchyRequest,
+    GetRegionParentsResult,
+    GetRegionRequest,
+    GetRegionResult,
+    IsRegionDescendantRequest,
+    ValidateRegionHierarchyResult,
+)
 from cyclescope.application.dto.valuation import (
     ValuationDateQuery,
     ValuationInputRequest,
@@ -59,6 +78,21 @@ __all__ = [
     "CycleScoreResponse",
     "CalculateInventoryRequest",
     "CalculateInventoryResponse",
+    "CreateClassificationSchemeRequest",
+    "CreateClassificationVersionRequest",
+    "CreateIndustryClassificationMappingRequest",
+    "ResolveIndustryClassificationRequest",
+    "ResolveIndustryClassificationResult",
+    "CreateRegionRelationshipRequest",
+    "CreateRegionRequest",
+    "GetRegionAncestorPathsResult",
+    "GetRegionDescendantsResult",
+    "GetRegionHierarchyRequest",
+    "GetRegionParentsResult",
+    "GetRegionRequest",
+    "GetRegionResult",
+    "IsRegionDescendantRequest",
+    "ValidateRegionHierarchyResult",
     "GetIndustrySignalsRequest",
     "GetIndustrySignalsResult",
     "ImportIndustrySignalsRequest",

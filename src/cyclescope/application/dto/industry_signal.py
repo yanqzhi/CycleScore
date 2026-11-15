@@ -29,6 +29,8 @@ class IndustrySignalInput:
     observation_date: date | None = None
     period_start: date | None = None
     period_end: date | None = None
+    classification_version_id: int | None = None
+    classification_mapping_id: int | None = None
     source_reference: str | None = None
     missing_reason: str | None = None
 

@@ -1,5 +1,10 @@
 """Database model declarations."""
 
+from cyclescope.infrastructure.database.models.classification import (
+    ClassificationSchemeModel,
+    ClassificationVersionModel,
+    IndustryClassificationMappingModel,
+)
 from cyclescope.infrastructure.database.models.cycle_score import CycleScoreModel
 from cyclescope.infrastructure.database.models.data_quality import (
     DataAnomalyLifecycleEventModel,
@@ -36,6 +41,10 @@ from cyclescope.infrastructure.database.models.master_data import (
 from cyclescope.infrastructure.database.models.normalized_earnings import (
     NormalizedEarningsInputRefModel,
     NormalizedEarningsResultModel,
+)
+from cyclescope.infrastructure.database.models.region import (
+    RegionModel,
+    RegionRelationshipModel,
 )
 from cyclescope.infrastructure.database.models.valuation import (
     HistoricalValuationMetricModel,
@@ -82,6 +91,11 @@ __all__ = [
     "CycleScoreModel",
     "InventorySnapshotModel",
     "IndustrySignalObservationModel",
+    "ClassificationSchemeModel",
+    "ClassificationVersionModel",
+    "IndustryClassificationMappingModel",
+    "RegionModel",
+    "RegionRelationshipModel",
 ]
 
 from cyclescope.infrastructure.database.models.ingestion import (

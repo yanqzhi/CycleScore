@@ -81,6 +81,12 @@ class IndustrySignalObservationModel(TimestampMixin, Base):
             name="publication_availability_order",
         ),
         CheckConstraint(
+            "(classification_version_id IS NULL AND classification_mapping_id IS NULL) "
+            "OR (classification_version_id IS NOT NULL "
+            "AND classification_mapping_id IS NOT NULL)",
+            name="classification_reference_pair",
+        ),
+        CheckConstraint(
             "region_code = trim(region_code) AND length(region_code) BETWEEN 1 AND 64",
             name="region_code_valid",
         ),
@@ -107,6 +113,10 @@ class IndustrySignalObservationModel(TimestampMixin, Base):
             "ix_industry_signals_subindustry_region",
             "sub_industry_id",
             "region_code",
+        ),
+        Index(
+            "ix_industry_signals_classification_mapping",
+            "classification_mapping_id",
         ),
         Index(
             "uq_industry_signal_point_revision_no_subindustry",
@@ -186,6 +196,12 @@ class IndustrySignalObservationModel(TimestampMixin, Base):
     )
     sub_industry_id: Mapped[int | None] = mapped_column(
         ForeignKey("sub_industries.id", ondelete="RESTRICT")
+    )
+    classification_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("classification_versions.id", ondelete="RESTRICT")
+    )
+    classification_mapping_id: Mapped[int | None] = mapped_column(
+        ForeignKey("industry_classification_mappings.id", ondelete="RESTRICT")
     )
     source_id: Mapped[int] = mapped_column(
         ForeignKey("data_sources.id", ondelete="RESTRICT"), nullable=False

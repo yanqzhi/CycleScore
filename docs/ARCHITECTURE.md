@@ -104,3 +104,17 @@ is selected. Infrastructure maps only Domain entities to append-only SQL rows
 and selects revisions after availability and observation-date filtering. It
 does not combine units, currencies, regions, industry scopes, or providers.
 See `INDUSTRY_SIGNAL_SPEC.md`.
+
+# Classification and Region Masters (Sprint 16)
+
+The Domain keeps internal Industry/SubIndustry identities separate from
+external versioned classification schemes and effective-dated mappings.
+Application resolution requires an explicit scheme, version, code, and
+effective date; mapping validity and version validity are both checked. No
+fuzzy matching or version fallback is performed. Industry Signal observations
+may retain nullable references to the exact classification version and mapping
+used at import; legacy rows remain unchanged. Region relationships are modeled
+as a multi-parent DAG because economic and market regions overlap. Queries walk
+explicit edges and do not aggregate observations. Repositories flush only;
+callers own transaction boundaries. See `CLASSIFICATION_MASTER_SPEC.md` and
+`REGION_MASTER_SPEC.md`.

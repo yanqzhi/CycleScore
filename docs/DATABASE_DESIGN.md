@@ -97,3 +97,15 @@ Availability/date and scope indexes support PIT reads. The repository exposes
 create, existence, and PIT-list operations only and never commits. Downgrade
 drops only this new table and its indexes. See
 [INDUSTRY_SIGNAL_SPEC.md](INDUSTRY_SIGNAL_SPEC.md).
+
+## Classification and regions (Sprint 16)
+
+Migration `0021_classification_and_region_masters` adds classification scheme,
+version, and mapping tables plus independent region nodes and containment
+edges. Effective dates and uniqueness are constrained; overlap and graph-cycle
+validation are performed in Application within caller-owned transactions.
+Industry Signal receives two nullable RESTRICT references that must be both
+null or both present. No historical row is backfilled, and downgrade removes
+only these columns and the five new master tables. See
+[CLASSIFICATION_MASTER_SPEC.md](CLASSIFICATION_MASTER_SPEC.md) and
+[REGION_MASTER_SPEC.md](REGION_MASTER_SPEC.md).

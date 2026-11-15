@@ -1,5 +1,10 @@
 """SQLAlchemy repository implementations."""
 
+from cyclescope.infrastructure.database.repositories.classification import (
+    SQLAlchemyClassificationSchemeRepository,
+    SQLAlchemyClassificationVersionRepository,
+    SQLAlchemyIndustryClassificationMappingRepository,
+)
 from cyclescope.infrastructure.database.repositories.cycle_score import (
     SQLAlchemyCycleScoreRepository,
 )
@@ -24,6 +29,10 @@ from cyclescope.infrastructure.database.repositories.master_data import (
     SecurityIdentifierSqlAlchemyRepository,
     SecuritySqlAlchemyRepository,
 )
+from cyclescope.infrastructure.database.repositories.region import (
+    SQLAlchemyRegionRelationshipRepository,
+    SQLAlchemyRegionRepository,
+)
 
 __all__ = [
     "CompanyIndustryExposureSqlAlchemyRepository",
@@ -47,6 +56,11 @@ __all__ = [
     "SQLAlchemyCycleScoreRepository",
     "SQLAlchemyInventorySnapshotRepository",
     "SQLAlchemyIndustrySignalObservationRepository",
+    "SQLAlchemyClassificationSchemeRepository",
+    "SQLAlchemyClassificationVersionRepository",
+    "SQLAlchemyIndustryClassificationMappingRepository",
+    "SQLAlchemyRegionRepository",
+    "SQLAlchemyRegionRelationshipRepository",
 ]
 
 from cyclescope.infrastructure.database.repositories.financial_data import (

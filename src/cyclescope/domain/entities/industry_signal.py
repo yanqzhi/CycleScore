@@ -120,6 +120,8 @@ class IndustrySignalObservation:
     observation_date: date | None = None
     period_start: date | None = None
     period_end: date | None = None
+    classification_version_id: int | None = None
+    classification_mapping_id: int | None = None
     source_reference: str | None = None
     missing_reason: str | None = None
     temporal_kind: IndustrySignalTemporalKind = field(init=False)
@@ -135,6 +137,19 @@ class IndustrySignalObservation:
             )
         if self.sub_industry_id is not None and self.sub_industry_id < 1:
             raise DomainValidationError("sub_industry_id must be positive.")
+        if (self.classification_version_id is None) != (
+            self.classification_mapping_id is None
+        ):
+            raise DomainValidationError(
+                "Classification version and mapping references must be "
+                "supplied together."
+            )
+        if self.classification_version_id is not None and (
+            self.classification_version_id < 1
+            or self.classification_mapping_id is None
+            or self.classification_mapping_id < 1
+        ):
+            raise DomainValidationError("Classification references must be positive.")
         if (
             not self.region_code
             or len(self.region_code) > 64

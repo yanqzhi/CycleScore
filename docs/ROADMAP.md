@@ -20,6 +20,11 @@ Extend the earnings-cycle proxy only after reviewing the independent PIT company
 ## Current boundary
 
 Quality thresholds need market-specific calibration and review; corporate actions can produce legitimate extreme moves, and configured holiday calendars need maintenance. Cycle Score v1 only represents annual company operating-profit patterns, not a complete industry cycle. Inventory trend thresholds also need calibration and are descriptive only. Industry signal taxonomy/region mapping and source adapters, industry inventory aggregation, other CSV datasets, live providers (including IBKR), automated scheduling, Cycle Score input extensions, and opportunity/screening/backtesting engines remain future work.
+
+Sprint 16 establishes curated classification versions/mappings and an explicit
+multi-parent region master. Live classification feeds, automated crosswalks,
+company assignment, region aggregation, and graph-write concurrency coordination
+remain future work.
 # Sprint 12 — Value Score
 
 Value Score v1 is implemented as an append-only point-in-time snapshot engine.
