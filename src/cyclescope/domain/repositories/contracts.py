@@ -17,6 +17,10 @@ from cyclescope.domain.entities.financial_data import (
     FinancialStatementItem,
 )
 from cyclescope.domain.entities.fx_rate import FxRate
+from cyclescope.domain.entities.industry_signal import (
+    IndustrySignalObservation,
+    IndustrySignalType,
+)
 from cyclescope.domain.entities.ingestion import IngestionRun, RawDataRecord
 from cyclescope.domain.entities.inventory import InventorySnapshot
 from cyclescope.domain.entities.listing import Listing
@@ -143,6 +147,37 @@ class CompanyIndustryExposureRepository(Repository[CompanyIndustryExposure], ABC
 
 class DataSourceRepository(Repository[DataSource], ABC):
     """Data source persistence contract."""
+
+
+class IndustrySignalObservationRepository(ABC):
+    """Append-only PIT industry signal repository contract."""
+
+    @abstractmethod
+    def create(
+        self, observation: IndustrySignalObservation
+    ) -> IndustrySignalObservation:
+        """Insert one immutable signal revision."""
+
+    @abstractmethod
+    def exists_revision(self, observation: IndustrySignalObservation) -> bool:
+        """Check the natural signal key and revision number."""
+
+    @abstractmethod
+    def list_available_as_of(
+        self,
+        industry_id: int,
+        as_of: datetime,
+        *,
+        signal_type: IndustrySignalType | None = None,
+        sub_industry_id: int | None = None,
+        region_code: str | None = None,
+        source_id: int | None = None,
+    ) -> list[IndustrySignalObservation]:
+        """Return source-scoped rows visible by ``as_of``.
+
+        Apply both the availability cutoff and the observation date/period-end
+        cutoff. Revision selection is left to Application after PIT filtering.
+        """
 
 
 class DailyPriceRepository(ABC):

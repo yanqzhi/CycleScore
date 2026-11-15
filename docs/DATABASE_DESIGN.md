@@ -83,3 +83,17 @@ Downgrade removes only this new table and indexes. See
 Initialization also inserts missing `INVENTORIES` and `COST_OF_GOODS_SOLD`
 financial item definitions. It never updates existing item definitions or
 source mappings.
+
+# Industry signal observations (Sprint 15)
+
+Migration `0020_industry_signal_observations` adds an append-only table keyed by
+industry, optional sub-industry, source, signal type, temporal observation key,
+region, and revision number. `NUMERIC(38, 12)` stores values; `NULL` values
+require an explicit missing reason. RESTRICT foreign keys preserve industry,
+sub-industry, and source identities. Shape, type/unit, currency, publication,
+and revision constraints are paired with partial unique indexes that avoid SQL
+`NULL` uniqueness gaps for optional sub-industries and period/date columns.
+Availability/date and scope indexes support PIT reads. The repository exposes
+create, existence, and PIT-list operations only and never commits. Downgrade
+drops only this new table and its indexes. See
+[INDUSTRY_SIGNAL_SPEC.md](INDUSTRY_SIGNAL_SPEC.md).

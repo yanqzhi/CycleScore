@@ -4,6 +4,13 @@ from cyclescope.application.dto.cycle_score import (
     CalculateCycleScoreRequest,
     CycleScoreResponse,
 )
+from cyclescope.application.dto.industry_signal import (
+    GetIndustrySignalsRequest,
+    GetIndustrySignalsResult,
+    ImportIndustrySignalsRequest,
+    ImportIndustrySignalsResult,
+    IndustrySignalInput,
+)
 from cyclescope.application.dto.inventory import (
     CalculateInventoryRequest,
     CalculateInventoryResponse,
@@ -52,6 +59,11 @@ __all__ = [
     "CycleScoreResponse",
     "CalculateInventoryRequest",
     "CalculateInventoryResponse",
+    "GetIndustrySignalsRequest",
+    "GetIndustrySignalsResult",
+    "ImportIndustrySignalsRequest",
+    "ImportIndustrySignalsResult",
+    "IndustrySignalInput",
     "DataRetrievalStatus",
     "FxObservationAsOfRequest",
     "FxPeriodRequest",

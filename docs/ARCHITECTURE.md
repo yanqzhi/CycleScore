@@ -93,3 +93,14 @@ versioned trend. SQLite persistence appends one snapshot per visible FY with
 input statement and line provenance; repositories do not commit. No financial
 input, PIT selection, or existing tables are modified. See
 `INVENTORY_ENGINE_SPEC.md`.
+
+# Industry Signal Data Foundation (Sprint 15)
+
+Provider-neutral industry signal DTOs and Domain entities distinguish point,
+period, and event observations by controlled signal type. Application import
+validates existing industry/sub-industry/source references; the query applies
+one UTC PIT cutoff and rejects ambiguous multi-source results unless a source
+is selected. Infrastructure maps only Domain entities to append-only SQL rows
+and selects revisions after availability and observation-date filtering. It
+does not combine units, currencies, regions, industry scopes, or providers.
+See `INDUSTRY_SIGNAL_SPEC.md`.

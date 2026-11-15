@@ -26,6 +26,12 @@ from cyclescope.domain.entities.financial_data import (
 )
 from cyclescope.domain.entities.fx_rate import FxRate
 from cyclescope.domain.entities.industry import Industry
+from cyclescope.domain.entities.industry_signal import (
+    IndustrySignalObservation,
+    IndustrySignalTemporalKind,
+    IndustrySignalType,
+    IndustrySignalUnit,
+)
 from cyclescope.domain.entities.ingestion import IngestionRun, RawDataRecord
 from cyclescope.domain.entities.inventory import (
     InventoryAnnualObservation,
@@ -102,6 +108,10 @@ __all__ = [
     "FinancialStatement",
     "FinancialStatementItem",
     "Industry",
+    "IndustrySignalObservation",
+    "IndustrySignalTemporalKind",
+    "IndustrySignalType",
+    "IndustrySignalUnit",
     "InventoryAnnualObservation",
     "InventoryConfidence",
     "InventoryConfig",

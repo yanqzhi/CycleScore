@@ -70,6 +70,19 @@ annual inventory observations and versioned growth thresholds; it does not
 infer excess inventory or demand deterioration. PIT availability, exact source
 revisions, and calculation input references are retained in append-only
 snapshots. See [INVENTORY_ENGINE_SPEC.md](INVENTORY_ENGINE_SPEC.md).
+
+## Industry signal data foundation (Sprint 15)
+
+Industry signals are raw provider-neutral facts, not engine inputs after any
+implicit aggregation. Their controlled signal type determines whether the
+record is a point, period, or event; signal-specific unit rules prevent
+comparing unrelated measures. PIT visibility requires both `available_at <=
+as_of` and the observation date/period end no later than the UTC date of
+`as_of`. Revisions are selected after PIT filtering within a source and natural
+observation key. A query with multiple eligible sources must explicitly select
+one. No inventory engine, supply-demand score, capacity model, or industry-cycle
+analysis is implemented in Sprint 15. See
+[INDUSTRY_SIGNAL_SPEC.md](INDUSTRY_SIGNAL_SPEC.md).
 # Value Score
 
 Sprint 12 introduces a versioned, six-component 0–100 Value Score. Lower
