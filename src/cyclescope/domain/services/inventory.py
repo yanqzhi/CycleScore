@@ -1,6 +1,6 @@
 """Deterministic Decimal calculations for annual company inventory."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, localcontext
 
 from cyclescope.domain.entities.inventory import (
@@ -13,6 +13,48 @@ from cyclescope.domain.entities.inventory import (
     InventoryTrend,
 )
 from cyclescope.domain.exceptions import DomainValidationError
+
+
+def _annual_period_issue(
+    observation: InventoryAnnualObservation, config: InventoryConfig
+) -> str | None:
+    if observation.period_compatibility_reason is not None:
+        return observation.period_compatibility_reason
+    if observation.period_start is None:
+        return "FY period start is missing; annual comparability cannot be verified."
+    duration = (observation.period_end - observation.period_start).days + 1
+    if not (
+        config.minimum_annual_period_days
+        <= duration
+        <= config.maximum_annual_period_days
+    ):
+        return (
+            "Incompatible financial periods: FY duration is outside the configured "
+            "annual range."
+        )
+    return None
+
+
+def _period_comparability_issue(
+    previous: InventoryAnnualObservation,
+    current: InventoryAnnualObservation,
+    config: InventoryConfig,
+) -> str | None:
+    if previous.fiscal_year + 1 != current.fiscal_year:
+        return "Missing opening inventory from the immediately preceding fiscal year."
+    previous_issue = _annual_period_issue(previous, config)
+    if previous_issue is not None:
+        return previous_issue
+    current_issue = _annual_period_issue(current, config)
+    if current_issue is not None:
+        return current_issue
+    assert previous.period_start is not None
+    assert current.period_start is not None
+    if previous.period_end >= current.period_start:
+        return "Incompatible financial periods: prior FY overlaps current FY."
+    if previous.period_end + timedelta(days=1) != current.period_start:
+        return "Incompatible financial periods: a gap exists between FY periods."
+    return None
 
 
 def _divide(numerator: Decimal, denominator: Decimal) -> Decimal:
@@ -39,6 +81,7 @@ def _trend(
     if observations and (
         observations[-1].closing_inventory is None
         or observations[-1].closing_inventory < 0
+        or _annual_period_issue(observations[-1], config) is not None
     ):
         return InventoryTrend.UNKNOWN
     valid = [
@@ -50,7 +93,7 @@ def _trend(
         return InventoryTrend.UNKNOWN
     trailing = [valid[-1]]
     for row in reversed(valid[:-1]):
-        if row.fiscal_year != trailing[-1].fiscal_year - 1:
+        if _period_comparability_issue(row, trailing[-1], config) is not None:
             break
         trailing.append(row)
     trailing.reverse()
@@ -114,6 +157,9 @@ def calculate_inventory(
     previous: InventoryAnnualObservation | None = None
     for index, row in enumerate(ordered):
         reasons: list[str] = []
+        row_period_issue = _annual_period_issue(row, config)
+        if row_period_issue is not None:
+            reasons.append(row_period_issue)
         closing = row.closing_inventory
         if closing is None:
             reasons.append("Missing closing inventory.")
@@ -121,12 +167,12 @@ def calculate_inventory(
             closing = None
             reasons.append("Invalid inventory balance: closing inventory is negative.")
         opening = None
-        if previous is None or previous.fiscal_year != row.fiscal_year - 1:
+        if previous is None:
             reasons.append("Missing opening inventory from the previous fiscal year.")
-        elif row.period_start is not None and previous.period_end >= row.period_start:
-            reasons.append(
-                "Incompatible financial periods: prior FY overlaps current FY."
-            )
+        elif (
+            period_issue := _period_comparability_issue(previous, row, config)
+        ) is not None:
+            reasons.append(period_issue)
         elif previous.closing_inventory is None or previous.closing_inventory < 0:
             reasons.append("Previous fiscal-year closing inventory is unavailable.")
         else:
@@ -150,6 +196,9 @@ def calculate_inventory(
         cogs = row.cogs
         if cogs is None:
             reasons.append(row.cogs_unavailable_reason or "Missing annual COGS.")
+        elif (period_issue := _annual_period_issue(row, config)) is not None:
+            cogs = None
+            reasons.append(period_issue)
         elif cogs <= 0:
             cogs = None
             reasons.append("Annual COGS must be positive.")
@@ -174,7 +223,7 @@ def calculate_inventory(
         # Include each annual closing-balance fact actually used by the trend.
         trailing: list[InventoryAnnualObservation] = [row]
         for candidate in reversed(ordered[:index]):
-            if candidate.fiscal_year != trailing[-1].fiscal_year - 1:
+            if _period_comparability_issue(candidate, trailing[-1], config) is not None:
                 break
             trailing.append(candidate)
         for candidate in trailing:

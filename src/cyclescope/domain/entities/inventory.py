@@ -32,13 +32,15 @@ class InventoryConfidence(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class InventoryConfig:
-    version: int = 1
+    version: int = 2
     days_per_year: int = 365
     stable_growth_threshold: Decimal = Decimal("0.05")
     minimum_trend_observations: int = 3
+    minimum_annual_period_days: int = 330
+    maximum_annual_period_days: int = 400
 
     def __post_init__(self) -> None:
-        if self.version < 1 or self.days_per_year != 365:
+        if self.version < 2 or self.days_per_year != 365:
             raise DomainValidationError("Inventory version or annual basis is invalid.")
         if not self.stable_growth_threshold.is_finite() or not (
             Decimal(0) <= self.stable_growth_threshold < Decimal(1)
@@ -48,6 +50,11 @@ class InventoryConfig:
             raise DomainValidationError(
                 "At least three trend observations are required."
             )
+        if (
+            self.minimum_annual_period_days < 1
+            or self.maximum_annual_period_days < self.minimum_annual_period_days
+        ):
+            raise DomainValidationError("Annual period duration bounds are invalid.")
 
     def snapshot(self) -> dict[str, object]:
         return {
@@ -55,6 +62,8 @@ class InventoryConfig:
             "days_per_year": self.days_per_year,
             "stable_growth_threshold": str(self.stable_growth_threshold),
             "minimum_trend_observations": self.minimum_trend_observations,
+            "minimum_annual_period_days": self.minimum_annual_period_days,
+            "maximum_annual_period_days": self.maximum_annual_period_days,
         }
 
 
@@ -119,11 +128,16 @@ class InventoryAnnualObservation:
     inventory_reference: InventoryInputReference | None
     cogs_reference: InventoryInputReference | None
     cogs_unavailable_reason: str | None = None
+    period_compatibility_reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.fiscal_year < 1 or self.source_id < 1:
             raise DomainValidationError("Inventory annual period is invalid.")
-        if self.period_start is not None and self.period_start > self.period_end:
+        if (
+            self.period_start is not None
+            and self.period_start > self.period_end
+            and self.period_compatibility_reason is None
+        ):
             raise DomainValidationError("Inventory annual period is invalid.")
         if len(self.currency) != 3 or not self.currency.isupper():
             raise DomainValidationError("Inventory currency is invalid.")

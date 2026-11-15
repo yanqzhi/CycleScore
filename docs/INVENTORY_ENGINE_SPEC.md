@@ -13,10 +13,13 @@ statements are used. A source must be explicitly selected when more than one
 eligible source exists. All selected historical statements must share source,
 accounting standard, consolidation scope, and reporting currency. For COGS to
 be used with inventory in a year, the two FY statements must also have the same
-fiscal year and period end. A period-end mismatch leaves turnover unavailable
-with an explicit reason. Interim data is never annualized. Currency conversion
-is not supported. Company-level amounts are not multiplied by industry revenue
-exposure and are not represented as segment inventory.
+fiscal year, period end, and, when both statements provide it, period start. A
+BS/PL period mismatch leaves COGS-based metrics unavailable with an explicit
+reason. The period start used for each annual observation is PL's when present;
+otherwise it falls back to the BS period start. Interim data is never
+annualized. Currency conversion is not supported. Company-level amounts are
+not multiplied by industry revenue exposure and are not represented as segment
+inventory.
 
 Initialization idempotently inserts these two standard FinancialItem masters
 when absent. Existing item labels, active state, IDs, and source mappings are
@@ -28,8 +31,13 @@ For fiscal year `Y`:
 
 - Closing inventory is the `INVENTORIES` FY balance at the period end.
 - Opening inventory is closing inventory from the immediately preceding FY.
-  A missing year is not bridged or filled with zero; overlapping FY intervals
-  are incompatible and do not supply an opening balance.
+  A missing year is not bridged or filled with zero. Comparative calculations
+  require fiscal-year labels to be consecutive, both period starts to be
+  available, each period duration to be 330–400 days inclusive, and the current
+  period to begin the day after the prior period ends. Gaps, overlaps, missing
+  starts, or durations outside this annual range make opening inventory,
+  average inventory, YoY changes/growth, turnover, and trend unavailable while
+  retaining the valid closing inventory.
 - YoY absolute change = closing inventory minus opening inventory.
 - YoY growth = absolute change divided by opening inventory; it is unavailable
   when opening inventory is zero or negative.
@@ -47,8 +55,10 @@ expanded local precision; persisted values use the financial store's
 ## Trend and availability
 
 Trend is descriptive and uses closing balances only. Configurable
-`stable_growth_threshold` and `minimum_trend_observations` are versioned in the
-configuration snapshot. The default requires at least three consecutive FY
+`stable_growth_threshold`, `minimum_trend_observations`, and the annual-period
+duration bounds are versioned in the configuration snapshot. Calculation
+version 2 applies the continuity checks described above. The default requires at
+least three consecutive FY
 observations. All observed annual growth rates above the threshold classify as
 `INCREASING`; all below its negative as `DECREASING`; rates within the threshold
 as `STABLE`; mixed directions or magnitudes classify as `VOLATILE`. Missing FYs,

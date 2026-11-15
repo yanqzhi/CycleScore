@@ -41,12 +41,19 @@ def _statement(
     currency: str = "JPY",
     standard: str = "JGAAP",
     scope: str = "CONSOLIDATED",
+    period_start: date | None = None,
     period_end: date | None = None,
     revision: int = 1,
     available_at: datetime | None = None,
 ) -> FinancialStatementModel:
     end = period_end or date(year + 1, 3, 31)
-    start = date(year, 4, 1) if statement_type == "PL" else None
+    start = (
+        period_start
+        if period_start is not None
+        else date(year, 4, 1)
+        if statement_type == "PL"
+        else None
+    )
     available = available_at or datetime(
         end.year, end.month, end.day, tzinfo=UTC
     ) + timedelta(days=60)
@@ -89,6 +96,7 @@ def _insert_year(
     bs_scope: str = "CONSOLIDATED",
     pl_scope: str = "CONSOLIDATED",
     pl_period_end: date | None = None,
+    bs_period_start: date | None = None,
     available_at: datetime | None = None,
 ) -> tuple[FinancialStatementModel, FinancialStatementModel]:
     balance = _statement(
@@ -100,6 +108,7 @@ def _insert_year(
         currency=bs_currency,
         standard=bs_standard,
         scope=bs_scope,
+        period_start=bs_period_start,
         revision=revision,
         available_at=available_at,
     )
@@ -138,6 +147,39 @@ def _insert_year(
     )
     session.flush()
     return balance, income
+
+
+def _insert_bs_only(
+    session: Session,
+    company_id: int,
+    source_id: int,
+    inventory_item_id: int,
+    fiscal_year: int,
+    period_start: date,
+    period_end: date,
+    value: str,
+) -> FinancialStatementModel:
+    statement = _statement(
+        session,
+        company_id=company_id,
+        source_id=source_id,
+        year=fiscal_year,
+        statement_type="BS",
+        period_start=period_start,
+        period_end=period_end,
+    )
+    session.add(
+        FinancialStatementItemModel(
+            financial_statement_id=statement.id,
+            financial_item_id=inventory_item_id,
+            value=Decimal(value),
+            currency_code="JPY",
+            unit_code="CURRENCY",
+            scale_multiplier=1,
+        )
+    )
+    session.flush()
+    return statement
 
 
 def _setup(session: Session, *, years=(2022, 2023, 2024, 2025)):
@@ -298,6 +340,91 @@ def test_incompatible_fiscal_period_has_explicit_reason(session: Session) -> Non
     assert snapshot.cogs is None
     assert any("periods" in reason for reason in snapshot.unavailable_reasons)
     assert snapshot.status == InventoryStatus.PARTIAL
+
+
+def test_bs_and_pl_period_starts_must_match_when_both_are_present(
+    session: Session,
+) -> None:
+    calculator, _, company, source, items = _setup(session, years=())
+    _insert_year(
+        session,
+        company.id,
+        source.id,
+        items,
+        2024,
+        "10",
+        "100",
+        bs_period_start=date(2024, 5, 1),
+    )
+    result = calculator.execute(CalculateInventoryRequest(company.id, AS_OF))
+    snapshot = result.snapshots[0]
+    assert snapshot.period_start == date(2024, 4, 1)
+    assert snapshot.closing_inventory == Decimal("10")
+    assert snapshot.cogs is None
+    assert any(
+        "period starts differ" in reason for reason in snapshot.unavailable_reasons
+    )
+
+
+def test_bs_only_fiscal_years_fall_back_to_bs_period_start(session: Session) -> None:
+    calculator, _, company, source, items = _setup(session, years=())
+    _insert_bs_only(
+        session,
+        company.id,
+        source.id,
+        items["INVENTORIES"],
+        2023,
+        date(2023, 4, 1),
+        date(2024, 3, 31),
+        "100",
+    )
+    _insert_bs_only(
+        session,
+        company.id,
+        source.id,
+        items["INVENTORIES"],
+        2024,
+        date(2024, 4, 1),
+        date(2025, 3, 31),
+        "120",
+    )
+    result = calculator.execute(CalculateInventoryRequest(company.id, AS_OF))
+    assert result.snapshots[1].period_start == date(2024, 4, 1)
+    assert result.snapshots[1].opening_inventory == Decimal("100")
+    assert result.snapshots[1].inventory_change == Decimal("20")
+
+
+def test_bs_only_overlapping_periods_preserve_level_but_reject_comparison(
+    session: Session,
+) -> None:
+    calculator, _, company, source, items = _setup(session, years=())
+    _insert_bs_only(
+        session,
+        company.id,
+        source.id,
+        items["INVENTORIES"],
+        2023,
+        date(2023, 4, 1),
+        date(2024, 3, 31),
+        "100",
+    )
+    _insert_bs_only(
+        session,
+        company.id,
+        source.id,
+        items["INVENTORIES"],
+        2024,
+        date(2024, 1, 1),
+        date(2024, 12, 31),
+        "120",
+    )
+    result = calculator.execute(CalculateInventoryRequest(company.id, AS_OF))
+    snapshot = result.snapshots[1]
+    assert snapshot.period_start == date(2024, 1, 1)
+    assert snapshot.closing_inventory == Decimal("120")
+    assert snapshot.opening_inventory is None
+    assert snapshot.inventory_change is None
+    assert any("overlaps" in reason for reason in snapshot.unavailable_reasons)
 
 
 def test_append_only_recalculation_and_caller_rollback(session: Session) -> None:

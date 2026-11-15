@@ -112,17 +112,31 @@ class CalculateInventory:
             inv_value, inv_ref = self._line(bs, inventory_item, "INVENTORIES")
             cogs_value, cogs_ref = self._line(pl, cogs_item, "COST_OF_GOODS_SOLD")
             cogs_reason = None
-            period_start = pl.statement.period_start if pl is not None else None
+            period_start = (
+                pl.statement.period_start
+                if pl is not None and pl.statement.period_start is not None
+                else base_statement.period_start
+            )
+            period_compatibility_reason = None
             if bs is not None and pl is not None:
                 bs_statement = bs.statement
                 pl_statement = pl.statement
                 if bs_statement.period_end != pl_statement.period_end:
                     cogs_value = None
                     cogs_ref = None
-                    cogs_reason = (
+                    period_compatibility_reason = cogs_reason = (
                         "Incompatible financial periods: FY period ends differ."
                     )
                 elif (
+                    bs_statement.period_start is not None
+                    and bs_statement.period_start != pl_statement.period_start
+                ):
+                    cogs_value = None
+                    cogs_ref = None
+                    period_compatibility_reason = cogs_reason = (
+                        "Incompatible financial periods: FY period starts differ."
+                    )
+                if (
                     bs_statement.reporting_currency != pl_statement.reporting_currency
                     or bs_statement.accounting_standard
                     != pl_statement.accounting_standard
@@ -148,6 +162,7 @@ class CalculateInventory:
                     inventory_reference=inv_ref,
                     cogs_reference=cogs_ref,
                     cogs_unavailable_reason=cogs_reason,
+                    period_compatibility_reason=period_compatibility_reason,
                 )
             )
         snapshots = calculate_inventory(

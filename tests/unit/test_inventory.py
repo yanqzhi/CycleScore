@@ -18,11 +18,18 @@ from cyclescope.domain.services.inventory import calculate_inventory
 AS_OF = datetime(2026, 6, 1, tzinfo=UTC)
 
 
-def _row(year: int, inventory: str | None, cogs: str | None = "100"):
+def _row(
+    year: int,
+    inventory: str | None,
+    cogs: str | None = "100",
+    *,
+    period_start: date | None = None,
+    period_end: date | None = None,
+):
     return InventoryAnnualObservation(
         fiscal_year=year,
-        period_start=date(year, 4, 1),
-        period_end=date(year + 1, 3, 31),
+        period_start=period_start or date(year, 4, 1),
+        period_end=period_end or date(year + 1, 3, 31),
         currency="JPY",
         source_id=1,
         accounting_standard="JGAAP",
@@ -81,12 +88,65 @@ def test_missing_fiscal_year_is_not_filled_or_used_as_opening() -> None:
     assert snapshots[1].trend == InventoryTrend.UNKNOWN
 
 
+def test_fiscal_year_label_change_with_overlapping_periods_is_not_comparable() -> None:
+    previous = _row(2023, "10")
+    changed_fiscal_year = _row(
+        2024,
+        "20",
+        period_start=date(2024, 1, 1),
+        period_end=date(2024, 12, 31),
+    )
+    snapshot = _calculate(previous, changed_fiscal_year)[1]
+    assert snapshot.closing_inventory == Decimal("20")
+    assert snapshot.opening_inventory is None
+    assert snapshot.inventory_change is None
+    assert snapshot.inventory_growth is None
+    assert snapshot.trend == InventoryTrend.UNKNOWN
+    assert any("overlaps" in reason for reason in snapshot.unavailable_reasons)
+
+
+def test_gap_between_adjacent_fiscal_periods_blocks_comparative_metrics() -> None:
+    previous = _row(2023, "10")
+    current = _row(2024, "20", period_start=date(2024, 4, 15))
+    snapshot = _calculate(previous, current)[1]
+    assert snapshot.closing_inventory == Decimal("20")
+    assert snapshot.opening_inventory is None
+    assert snapshot.inventory_change is None
+    assert snapshot.inventory_growth is None
+    assert snapshot.trend == InventoryTrend.UNKNOWN
+    assert any("gap exists" in reason for reason in snapshot.unavailable_reasons)
+
+
+def test_incompatible_annual_duration_preserves_closing_inventory() -> None:
+    short_year = _row(
+        2024,
+        "20",
+        period_start=date(2024, 4, 1),
+        period_end=date(2025, 1, 24),
+    )
+    snapshot = _calculate(_row(2023, "10"), short_year)[1]
+    assert snapshot.closing_inventory == Decimal("20")
+    assert snapshot.opening_inventory is None
+    assert snapshot.inventory_growth is None
+    assert snapshot.inventory_turnover is None
+    assert snapshot.trend == InventoryTrend.UNKNOWN
+    assert any("duration" in reason for reason in snapshot.unavailable_reasons)
+
+
+def test_contiguous_annual_periods_support_yoy_and_trend_observations() -> None:
+    snapshots = _calculate(_row(2023, "100"), _row(2024, "120"), _row(2025, "150"))
+    assert snapshots[1].opening_inventory == Decimal("100")
+    assert snapshots[1].inventory_change == Decimal("20")
+    assert snapshots[1].inventory_growth == Decimal("0.2")
+    assert snapshots[2].trend == InventoryTrend.INCREASING
+
+
 def test_overlapping_fiscal_periods_do_not_supply_opening_inventory() -> None:
     previous = _row(2023, "10")
     current = InventoryAnnualObservation(
         fiscal_year=2024,
         period_start=date(2024, 1, 1),
-        period_end=date(2025, 3, 31),
+        period_end=date(2024, 12, 31),
         currency="JPY",
         source_id=1,
         accounting_standard="JGAAP",
@@ -132,6 +192,8 @@ def test_configuration_is_validated_and_snapshotted() -> None:
         "days_per_year": 365,
         "stable_growth_threshold": "0.1",
         "minimum_trend_observations": 4,
+        "minimum_annual_period_days": 330,
+        "maximum_annual_period_days": 400,
     }
     assert result.data_coverage == Decimal("0.125")
 
@@ -174,3 +236,8 @@ def test_identical_inputs_produce_deterministic_snapshots() -> None:
 def test_config_rejects_invalid_trend_threshold() -> None:
     with pytest.raises(DomainValidationError):
         InventoryConfig(stable_growth_threshold=Decimal("1"))
+
+
+def test_config_rejects_legacy_calculation_version() -> None:
+    with pytest.raises(DomainValidationError):
+        InventoryConfig(version=1)
