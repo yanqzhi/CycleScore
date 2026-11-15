@@ -136,3 +136,20 @@ identities are backfilled while old scopes remain incomplete. New snapshots
 persist every requested constituent, including regions without eligible
 observations. Downgrade removes the new scope table and added columns while
 leaving Sprint 17 snapshots and contributor records from 0023 intact.
+
+## Industry Supply & Demand (Sprint 19)
+
+Migration `0027_industry_supply_demand_engine` adds append-only
+`industry_supply_demand_snapshots`, `industry_supply_demand_inputs`, and
+`industry_supply_demand_scopes` tables. It follows the actual prior head,
+`0026_industry_inventory_input_composition`, and does not alter earlier
+migrations or existing Sprint 15–18 rows. The snapshot stores the complete
+versioned configuration, phase/status, values, coverage measures, and reasons.
+Input rows retain selected and excluded source snapshot provenance, including
+actual contributor regions and revision references. Scope rows separately
+preserve the requested region set and actual contributing region set; retrieval
+does not reconstruct constituents from Region relationships. Foreign keys use
+RESTRICT, numeric fields follow the existing NUMERIC precision contracts, and
+the repository flushes parent/children without committing. Downgrade removes
+only the three Sprint 19 tables. See
+`INDUSTRY_SUPPLY_DEMAND_ENGINE_SPEC.md`.

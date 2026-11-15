@@ -22,6 +22,9 @@ from cyclescope.application.dto.industry_signal import (
 from cyclescope.application.dto.industry_signal_aggregation import (
     AggregateIndustrySignalsRequest,
 )
+from cyclescope.application.dto.industry_supply_demand import (
+    AnalyzeIndustrySupplyDemandRequest,
+)
 from cyclescope.application.use_cases.industry_inventory import AnalyzeIndustryInventory
 from cyclescope.application.use_cases.industry_signal_aggregation import (
     AggregateIndustrySignals,
@@ -29,6 +32,9 @@ from cyclescope.application.use_cases.industry_signal_aggregation import (
 from cyclescope.application.use_cases.industry_signals import (
     GetIndustrySignals,
     ImportIndustrySignals,
+)
+from cyclescope.application.use_cases.industry_supply_demand import (
+    AnalyzeIndustrySupplyDemand,
 )
 from cyclescope.domain.entities.data_source import DataSource
 from cyclescope.domain.entities.industry import Industry
@@ -42,6 +48,11 @@ from cyclescope.domain.entities.industry_signal import (
     IndustrySignalType,
     IndustrySignalUnit,
 )
+from cyclescope.domain.entities.industry_supply_demand import (
+    IndustrySupplyDemandConfig,
+    IndustrySupplyDemandPhase,
+    IndustrySupplyDemandStatus,
+)
 from cyclescope.domain.entities.region import Region, RegionRelationship, RegionType
 from cyclescope.domain.exceptions import DomainValidationError
 from cyclescope.domain.services.industry_inventory import calculate_industry_inventory
@@ -49,6 +60,14 @@ from cyclescope.infrastructure.database.models.industry_inventory import (
     IndustryInventoryInputModel,
     IndustryInventoryScopeModel,
     IndustryInventorySnapshotModel,
+)
+from cyclescope.infrastructure.database.models.industry_signal_aggregate import (
+    IndustrySignalAggregateModel,
+)
+from cyclescope.infrastructure.database.models.industry_supply_demand import (
+    IndustrySupplyDemandInputModel,
+    IndustrySupplyDemandScopeModel,
+    IndustrySupplyDemandSnapshotModel,
 )
 from cyclescope.infrastructure.database.repositories.industry_inventory import (
     SQLAlchemyIndustryInventoryRepository,
@@ -58,6 +77,9 @@ from cyclescope.infrastructure.database.repositories.industry_signal import (
 )
 from cyclescope.infrastructure.database.repositories.industry_signal_aggregate import (
     SQLAlchemyIndustrySignalAggregateRepository,
+)
+from cyclescope.infrastructure.database.repositories.industry_supply_demand import (
+    SQLAlchemyIndustrySupplyDemandRepository,
 )
 from cyclescope.infrastructure.database.repositories.master_data import (
     DataSourceSqlAlchemyRepository,
@@ -205,24 +227,25 @@ def _aggregate_series(
         (IndustrySignalType.SHIPMENTS, "40"),
     ):
         selected_regions = (flow_region_overrides or {}).get(signal, ("JP", "US"))
-        for region in selected_regions:
-            signals.append(
-                _input(
-                    industry.id or 0,
-                    source.id or 0,
-                    region,
-                    str(Decimal(total) / 2),
-                    signal=signal,
-                    available=datetime(2026, 1, 15, tzinfo=UTC),
-                    start=(
-                        date(2025, 11, 1)
-                        if mismatched_flow_start
-                        and signal is IndustrySignalType.SHIPMENTS
-                        else date(2025, 12, 1)
-                    ),
-                    end=date(2025, 12, 31),
+        for flow_end in (date(2024, 12, 31), date(2025, 12, 31)):
+            for region in selected_regions:
+                signals.append(
+                    _input(
+                        industry.id or 0,
+                        source.id or 0,
+                        region,
+                        str(Decimal(total) / 2),
+                        signal=signal,
+                        available=datetime(flow_end.year + 1, 1, 15, tzinfo=UTC),
+                        start=(
+                            date(flow_end.year, 11, 1)
+                            if mismatched_flow_start
+                            and signal is IndustrySignalType.SHIPMENTS
+                            else date(flow_end.year, 12, 1)
+                        ),
+                        end=flow_end,
+                    )
                 )
-            )
     importer.execute(ImportIndustrySignalsRequest(tuple(signals)))
     region_rows = {row.region_code: row for row in aggregate.regions.list()}
     constituent_codes = ("JP", "US")
@@ -247,23 +270,24 @@ def _aggregate_series(
             )
         )
     for signal in (IndustrySignalType.PRODUCTION, IndustrySignalType.SHIPMENTS):
-        aggregate.execute(
-            AggregateIndustrySignalsRequest(
-                industry_id=industry.id or 0,
-                signal_type=signal,
-                aggregate_region_code="WORLD",
-                constituent_region_codes=constituent_codes,
-                policy_code="FLOW_SUM",
-                policy_version=1,
-                unit_code=IndustrySignalUnit.TONNE,
-                as_of=CUTOFF,
-                source_id=source.id,
-                period_start=date(2025, 12, 1),
-                period_end=date(2025, 12, 31),
-                expected_contributor_count=2,
-                minimum_coverage=Decimal("0.40"),
+        for flow_end in (date(2024, 12, 31), date(2025, 12, 31)):
+            aggregate.execute(
+                AggregateIndustrySignalsRequest(
+                    industry_id=industry.id or 0,
+                    signal_type=signal,
+                    aggregate_region_code="WORLD",
+                    constituent_region_codes=constituent_codes,
+                    policy_code="FLOW_SUM",
+                    policy_version=1,
+                    unit_code=IndustrySignalUnit.TONNE,
+                    as_of=CUTOFF,
+                    source_id=source.id,
+                    period_start=date(flow_end.year, 12, 1),
+                    period_end=flow_end,
+                    expected_contributor_count=2,
+                    minimum_coverage=Decimal("0.40"),
+                )
             )
-        )
     return aggregate_repo, industry, source, scope
 
 
@@ -333,6 +357,132 @@ def test_analysis_write_obeys_caller_rollback(session: Session) -> None:
     assert session.query(IndustryInventorySnapshotModel).count() == 0
     assert session.query(IndustryInventoryInputModel).count() == 0
     assert session.query(IndustryInventoryScopeModel).count() == 0
+
+
+def test_supply_demand_use_case_round_trips_with_exact_pit_provenance(
+    session: Session,
+) -> None:
+    aggregate_repo, industry, source, scope = _aggregate_series(session)
+    inventory_repo = SQLAlchemyIndustryInventoryRepository(session)
+    inventory = (
+        AnalyzeIndustryInventory(aggregate_repo, inventory_repo)
+        .execute(
+            AnalyzeIndustryInventoryRequest(
+                industry_id=industry.id or 0,
+                aggregate_region_code="WORLD",
+                requested_scope=scope,
+                source_id=source.id,
+                as_of=CUTOFF,
+                config=_config(),
+            )
+        )
+        .snapshot
+    )
+    repository = SQLAlchemyIndustrySupplyDemandRepository(session)
+    result = (
+        AnalyzeIndustrySupplyDemand(aggregate_repo, inventory_repo, repository)
+        .execute(
+            AnalyzeIndustrySupplyDemandRequest(
+                industry_id=industry.id or 0,
+                aggregate_region_id=1,
+                aggregate_region_code="WORLD",
+                requested_scope=scope,
+                source_id=source.id,
+                as_of=CUTOFF,
+                config=IndustrySupplyDemandConfig(
+                    version=1,
+                    minimum_coverage=Decimal("0.80"),
+                    flow_gap_tolerance=Decimal("0.10"),
+                    strong_demand_growth=Decimal("0.10"),
+                    negative_demand_growth=Decimal("-0.05"),
+                    inventory_accumulation_yoy=Decimal("0.10"),
+                    inventory_drawdown_yoy=Decimal("-0.10"),
+                    minimum_evidence_coverage=Decimal("0.50"),
+                ),
+            )
+        )
+        .snapshot
+    )
+
+    assert result.status is IndustrySupplyDemandStatus.AVAILABLE
+    assert result.phase is IndustrySupplyDemandPhase.OVERSUPPLY
+    assert result.observation_date == date(2025, 12, 31)
+    assert result.flow_gap == Decimal("10.000000000000")
+    assert result.flow_gap_ratio == Decimal("0.250000000000")
+    assert result.shipment_growth_yoy == Decimal("0.000000000000")
+    assert result.inventory_snapshot_id == inventory.id
+    assert result.inventory_classification is inventory.classification
+    assert result.coverage == Decimal("1.0000000")
+    assert result.evidence_coverage == Decimal("1.0000000")
+    assert result.confidence is None
+    assert result.requested_scope == scope
+    assert result.contributing_regions == scope
+    current_refs = [
+        ref
+        for ref in result.input_references
+        if ref.role in {"CURRENT_PRODUCTION", "CURRENT_SHIPMENTS"}
+    ]
+    inventory_flow_refs = {
+        ref.aggregate_id
+        for ref in inventory.input_references
+        if ref.role in {"PRODUCTION", "SHIPMENTS"}
+    }
+    assert {ref.aggregate_id for ref in current_refs} == inventory_flow_refs
+    assert all(ref.included and ref.available_at <= CUTOFF for ref in current_refs)
+    assert session.query(IndustrySupplyDemandSnapshotModel).count() == 1
+    assert repository.get_by_id(result.id or 0) == result
+    assert len(repository.list_by_industry(industry.id or 0, as_of=CUTOFF)) == 1
+
+
+def test_supply_demand_snapshot_and_audits_follow_caller_rollback(
+    session: Session,
+) -> None:
+    aggregate_repo, industry, source, scope = _aggregate_series(session)
+    inventory_repo = SQLAlchemyIndustryInventoryRepository(session)
+    AnalyzeIndustryInventory(aggregate_repo, inventory_repo).execute(
+        AnalyzeIndustryInventoryRequest(
+            industry_id=industry.id or 0,
+            aggregate_region_code="WORLD",
+            requested_scope=scope,
+            source_id=source.id,
+            as_of=CUTOFF,
+            config=_config(),
+        )
+    )
+    use_case = AnalyzeIndustrySupplyDemand(
+        aggregate_repo,
+        inventory_repo,
+        SQLAlchemyIndustrySupplyDemandRepository(session),
+    )
+    request = AnalyzeIndustrySupplyDemandRequest(
+        industry_id=industry.id or 0,
+        aggregate_region_id=1,
+        aggregate_region_code="WORLD",
+        requested_scope=scope,
+        source_id=source.id,
+        as_of=CUTOFF,
+        config=IndustrySupplyDemandConfig(
+            version=1,
+            minimum_coverage=Decimal("0.80"),
+            flow_gap_tolerance=Decimal("0.10"),
+            strong_demand_growth=Decimal("0.10"),
+            negative_demand_growth=Decimal("-0.05"),
+            inventory_accumulation_yoy=Decimal("0.10"),
+            inventory_drawdown_yoy=Decimal("-0.10"),
+            minimum_evidence_coverage=Decimal("0.50"),
+        ),
+    )
+    aggregate_count = session.query(IndustrySignalAggregateModel).count()
+    inventory_count = session.query(IndustryInventorySnapshotModel).count()
+    with pytest.raises(RuntimeError, match="rollback"):
+        with session.begin_nested():
+            use_case.execute(request)
+            raise RuntimeError("rollback")
+    assert session.query(IndustrySupplyDemandSnapshotModel).count() == 0
+    assert session.query(IndustrySupplyDemandInputModel).count() == 0
+    assert session.query(IndustrySupplyDemandScopeModel).count() == 0
+    assert session.query(IndustrySignalAggregateModel).count() == aggregate_count
+    assert session.query(IndustryInventorySnapshotModel).count() == inventory_count
 
 
 def test_scope_rows_keep_sqlite_foreign_key_enforcement(session: Session) -> None:
@@ -659,6 +809,7 @@ def test_engine_migration_upgrade_and_downgrade(tmp_path: Path) -> None:
     legacy_engine.dispose()
     command.upgrade(config, "0025_industry_inventory_engine")
     command.upgrade(config, "0026_industry_inventory_input_composition")
+    command.upgrade(config, "0027_industry_supply_demand_engine")
     engine = create_database_engine(f"sqlite:///{database}")
     assert "industry_inventory_snapshots" in inspect(engine).get_table_names()
     assert "industry_inventory_inputs" in inspect(engine).get_table_names()
@@ -673,6 +824,12 @@ def test_engine_migration_upgrade_and_downgrade(tmp_path: Path) -> None:
         "included",
         "exclusion_reason",
     } <= columns
+    supply_tables = {
+        "industry_supply_demand_snapshots",
+        "industry_supply_demand_inputs",
+        "industry_supply_demand_scopes",
+    }
+    assert supply_tables <= set(inspect(engine).get_table_names())
     with engine.connect() as connection:
         assert (
             connection.exec_driver_sql(
@@ -681,6 +838,7 @@ def test_engine_migration_upgrade_and_downgrade(tmp_path: Path) -> None:
             == "Legacy industry"
         )
     command.downgrade(config, "0025_industry_inventory_engine")
+    assert not supply_tables & set(inspect(engine).get_table_names())
     legacy_columns = {
         column["name"]
         for column in inspect(engine).get_columns("industry_inventory_inputs")

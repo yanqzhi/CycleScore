@@ -130,3 +130,24 @@ utilization. Infrastructure persists append-only snapshots and exact input
 contributors; transaction ownership remains with the caller. `CONTAINS` and
 `MEMBER_OF` retain separate meanings. See
 `INDUSTRY_SIGNAL_AGGREGATION_SPEC.md` for the calculation and limitations.
+
+# Industry Supply & Demand (Sprint 19)
+
+`AnalyzeIndustrySupplyDemand` reads the persisted Sprint 17 production and
+shipments aggregates and Sprint 18 inventory snapshots at one UTC `as_of`.
+The Domain service pairs only exact periods and compatible source, unit,
+currency, classification, policy, requested-scope, and actual-contributor
+cohorts. Historical shipment growth requires exact calendar-anniversary
+periods. Inventory context is accepted only when it references the exact flow
+aggregate IDs; the service never re-aggregates source observations or infers
+scope from current Region Master relationships.
+
+The engine reports a descriptive phase, not an investment signal. Coverage is
+the regional coverage of the current flow pair; evidence coverage is the
+fraction of current-flow, prior-year-flow, and inventory evidence groups
+available. These measures are independent, and confidence remains null in v1.
+`minimum_evidence_coverage` conservatively gates phase classification: below
+the configured threshold, the result remains `UNKNOWN` even if the current
+flow pair is sufficient to produce a partial snapshot. Repositories append
+snapshot, scope, and input provenance rows and flush only; the caller owns the
+transaction. See `INDUSTRY_SUPPLY_DEMAND_ENGINE_SPEC.md`.

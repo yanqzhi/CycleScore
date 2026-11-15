@@ -13,10 +13,11 @@
 - Sprint 14: Company-level annual inventory metrics, conservative configurable trend, PIT source/revision provenance, and append-only inventory snapshots.
 - Sprint 15: Provider-neutral point, period, and event industry signal observations with append-only PIT persistence, source-scoped revisions, ingestion contracts, and explicit ambiguity handling.
 - Sprint 18: Descriptive industry inventory cycle analysis over persisted PIT aggregates, with exact calendar YoY matching, production/shipments period diagnostics, versioned classification thresholds, explicit scope/source provenance, and append-only snapshots.
+- Sprint 19: Descriptive industry supply-demand analysis over persisted production/shipments aggregates and exact-linked inventory context, with PIT cohort matching, explicit phase thresholds, input/scope audit, and append-only snapshots.
 
 ## Recommended next step
 
-Further industry cycle analysis requires calibrated thresholds and sufficiently complete regional time series. Inventory engine v1 is descriptive only and does not infer supply-demand balance, capacity, or investment signals.
+Further industry cycle analysis requires calibrated thresholds and sufficiently complete regional time series. Industry Inventory and Supply & Demand v1 are descriptive only; Supply & Demand does not infer capacity or investment signals.
 
 ## Current boundary
 
@@ -24,8 +25,11 @@ Quality thresholds need market-specific calibration and review; corporate action
 
 Sprint 16 establishes curated classification versions/mappings and an explicit
 multi-parent region master. Live classification feeds, automated crosswalks,
-company assignment, region aggregation, and graph-write concurrency coordination
-remain future work.
+company assignment, broader region aggregation, calibrated industry-specific
+Supply & Demand thresholds, and graph-write concurrency coordination remain
+future work. Sprint 19 currently supports only exact-period PRODUCTION and
+SHIPMENTS pairs; it does not use Orders/Sales, interpolate missing periods, or
+perform currency/unit conversion.
 # Sprint 12 — Value Score
 
 Value Score v1 is implemented as an append-only point-in-time snapshot engine.

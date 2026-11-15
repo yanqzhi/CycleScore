@@ -57,6 +57,13 @@ from cyclescope.domain.entities.industry_signal_aggregate import (
     IndustrySignalAggregateSnapshot,
     IndustrySignalAggregationPolicy,
 )
+from cyclescope.domain.entities.industry_supply_demand import (
+    IndustrySupplyDemandConfig,
+    IndustrySupplyDemandInputReference,
+    IndustrySupplyDemandPhase,
+    IndustrySupplyDemandSnapshot,
+    IndustrySupplyDemandStatus,
+)
 from cyclescope.domain.entities.ingestion import IngestionRun, RawDataRecord
 from cyclescope.domain.entities.inventory import (
     InventoryAnnualObservation,
@@ -154,6 +161,11 @@ __all__ = [
     "IndustrySignalAggregateScope",
     "IndustrySignalAggregationPolicy",
     "IndustrySignalAggregateSnapshot",
+    "IndustrySupplyDemandConfig",
+    "IndustrySupplyDemandInputReference",
+    "IndustrySupplyDemandPhase",
+    "IndustrySupplyDemandSnapshot",
+    "IndustrySupplyDemandStatus",
     "IndustryInventoryClassification",
     "IndustryInventoryConfig",
     "IndustryInventoryInputReference",

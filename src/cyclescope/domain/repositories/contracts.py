@@ -30,6 +30,9 @@ from cyclescope.domain.entities.industry_signal import (
 from cyclescope.domain.entities.industry_signal_aggregate import (
     IndustrySignalAggregateSnapshot,
 )
+from cyclescope.domain.entities.industry_supply_demand import (
+    IndustrySupplyDemandSnapshot,
+)
 from cyclescope.domain.entities.ingestion import IngestionRun, RawDataRecord
 from cyclescope.domain.entities.inventory import InventorySnapshot
 from cyclescope.domain.entities.listing import Listing
@@ -230,6 +233,26 @@ class IndustryInventoryRepository(ABC):
         self, industry_id: int, *, as_of: datetime | None = None
     ) -> list[IndustryInventorySnapshot]:
         """List append-only analysis history, optionally with a PIT cutoff."""
+
+
+class IndustrySupplyDemandRepository(ABC):
+    """Append-only Industry Supply & Demand snapshots."""
+
+    @abstractmethod
+    def create(
+        self, snapshot: IndustrySupplyDemandSnapshot
+    ) -> IndustrySupplyDemandSnapshot:
+        """Append a snapshot and its scope/input audit rows; caller owns transaction."""
+
+    @abstractmethod
+    def get_by_id(self, snapshot_id: int) -> IndustrySupplyDemandSnapshot | None:
+        """Retrieve a snapshot with deterministic scope and input provenance."""
+
+    @abstractmethod
+    def list_by_industry(
+        self, industry_id: int, *, as_of: datetime | None = None
+    ) -> list[IndustrySupplyDemandSnapshot]:
+        """List append-only snapshots, optionally filtered by point-in-time cutoff."""
 
 
 class ClassificationSchemeRepository(ABC):

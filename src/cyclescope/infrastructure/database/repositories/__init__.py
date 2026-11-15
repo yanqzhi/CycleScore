@@ -20,6 +20,9 @@ from cyclescope.infrastructure.database.repositories.industry_signal import (
 from cyclescope.infrastructure.database.repositories.industry_signal_aggregate import (
     SQLAlchemyIndustrySignalAggregateRepository,
 )
+from cyclescope.infrastructure.database.repositories.industry_supply_demand import (
+    SQLAlchemyIndustrySupplyDemandRepository,
+)
 from cyclescope.infrastructure.database.repositories.inventory import (
     SQLAlchemyInventorySnapshotRepository,
 )
@@ -64,6 +67,7 @@ __all__ = [
     "SQLAlchemyIndustrySignalObservationRepository",
     "SQLAlchemyIndustrySignalAggregateRepository",
     "SQLAlchemyIndustryInventoryRepository",
+    "SQLAlchemyIndustrySupplyDemandRepository",
     "SQLAlchemyClassificationSchemeRepository",
     "SQLAlchemyClassificationVersionRepository",
     "SQLAlchemyIndustryClassificationMappingRepository",
