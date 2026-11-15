@@ -1,6 +1,7 @@
 """Database integrity and repository tests."""
 
 from dataclasses import replace
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -31,6 +32,7 @@ from cyclescope.infrastructure.database.models import (
     DataSourceModel,
     FinancialItemMappingModel,
     FinancialItemModel,
+    FinancialStatementModel,
     IndustryModel,
     SubIndustryModel,
     ValuationMetricModel,
@@ -141,7 +143,7 @@ def test_alembic_initialization_is_repeatable(tmp_path: object) -> None:
             connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
             ).scalar_one()
-            == "0018_inventory_snapshots"
+            == "0019_optional_pl_period_start"
         )
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
         assert (
@@ -399,3 +401,50 @@ def test_transaction_rollback(session: Session) -> None:
     session.add(IndustryModel(code="ROLLBACK", name="Rollback"))
     session.rollback()
     assert session.query(IndustryModel).count() == 0
+
+
+def test_pl_period_start_migration_is_reversible_and_allows_missing_start(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "optional_pl_period_start.db"
+    config = Config(str(Path.cwd() / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "0018_inventory_snapshots")
+    command.upgrade(config, "head")
+
+    engine = create_database_engine(f"sqlite:///{database_path}")
+    with Session(engine) as session:
+        company = CompanyModel(name="PL without start", country_code="JP")
+        source = DataSourceModel(
+            code="NO-START",
+            name="No start date source",
+            provider_type="test",
+        )
+        session.add_all([company, source])
+        session.flush()
+        available_at = datetime(2025, 5, 30, tzinfo=UTC)
+        statement = FinancialStatementModel(
+            company_id=company.id,
+            source_id=source.id,
+            statement_type="PL",
+            accounting_standard="JGAAP",
+            consolidation_scope="CONSOLIDATED",
+            fiscal_year=2024,
+            fiscal_period="FY",
+            period_start=None,
+            period_end=date(2025, 3, 31),
+            publication_date=available_at.date(),
+            publication_datetime=available_at,
+            available_at=available_at,
+            collected_at=available_at,
+            revision_number=1,
+            reporting_currency="JPY",
+        )
+        session.add(statement)
+        session.commit()
+        assert statement.id is not None
+        session.delete(statement)
+        session.commit()
+    engine.dispose()
+
+    command.downgrade(config, "0018_inventory_snapshots")

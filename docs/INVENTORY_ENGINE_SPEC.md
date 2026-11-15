@@ -19,7 +19,9 @@ reason. The period start used for each annual observation is PL's when present;
 otherwise it falls back to the BS period start. Interim data is never
 annualized. Currency conversion is not supported. Company-level amounts are
 not multiplied by industry revenue exposure and are not represented as segment
-inventory.
+inventory. A missing start on one statement does not alone make BS/PL periods
+incompatible; the selected annual period start must still pass the Domain's
+duration and continuity checks before comparative inventory metrics are used.
 
 Initialization idempotently inserts these two standard FinancialItem masters
 when absent. Existing item labels, active state, IDs, and source mappings are

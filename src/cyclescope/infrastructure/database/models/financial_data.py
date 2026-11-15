@@ -38,7 +38,7 @@ class FinancialStatementModel(TimestampMixin, Base):
             "period_start IS NULL OR period_start <= period_end", name="period_range"
         ),
         CheckConstraint(
-            "statement_type = 'BS' OR period_start IS NOT NULL",
+            "statement_type != 'CF' OR period_start IS NOT NULL",
             name="period_start_required",
         ),
         Index("ix_financial_statements_company_period", "company_id", "period_end"),

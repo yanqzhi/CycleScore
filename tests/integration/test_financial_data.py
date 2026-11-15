@@ -51,11 +51,28 @@ NOW = datetime(2026, 5, 15, 16, tzinfo=UTC)
 
 
 def test_statement_domain_validates_time_and_period():
-    with pytest.raises(DomainValidationError):
+    FinancialStatement(
+        1,
+        1,
+        StatementType.PL,
+        "IFRS",
+        ConsolidationScope.CONSOLIDATED,
+        2026,
+        FiscalPeriod.Q1,
+        None,
+        date(2026, 3, 31),
+        date(2026, 5, 15),
+        None,
+        NOW,
+        NOW,
+        1,
+        "USD",
+    )
+    with pytest.raises(DomainValidationError, match="CF statements require"):
         FinancialStatement(
             1,
             1,
-            StatementType.PL,
+            StatementType.CF,
             "IFRS",
             ConsolidationScope.CONSOLIDATED,
             2026,

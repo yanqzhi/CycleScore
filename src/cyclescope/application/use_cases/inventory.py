@@ -129,6 +129,7 @@ class CalculateInventory:
                     )
                 elif (
                     bs_statement.period_start is not None
+                    and pl_statement.period_start is not None
                     and bs_statement.period_start != pl_statement.period_start
                 ):
                     cogs_value = None

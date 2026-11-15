@@ -42,18 +42,15 @@ def _statement(
     standard: str = "JGAAP",
     scope: str = "CONSOLIDATED",
     period_start: date | None = None,
+    missing_period_start: bool = False,
     period_end: date | None = None,
     revision: int = 1,
     available_at: datetime | None = None,
 ) -> FinancialStatementModel:
     end = period_end or date(year + 1, 3, 31)
-    start = (
-        period_start
-        if period_start is not None
-        else date(year, 4, 1)
-        if statement_type == "PL"
-        else None
-    )
+    start = None if missing_period_start else period_start
+    if start is None and statement_type == "PL" and not missing_period_start:
+        start = date(year, 4, 1)
     available = available_at or datetime(
         end.year, end.month, end.day, tzinfo=UTC
     ) + timedelta(days=60)
@@ -97,6 +94,8 @@ def _insert_year(
     pl_scope: str = "CONSOLIDATED",
     pl_period_end: date | None = None,
     bs_period_start: date | None = None,
+    pl_period_start: date | None = None,
+    pl_missing_period_start: bool = False,
     available_at: datetime | None = None,
 ) -> tuple[FinancialStatementModel, FinancialStatementModel]:
     balance = _statement(
@@ -121,6 +120,8 @@ def _insert_year(
         currency=pl_currency,
         standard=pl_standard,
         scope=pl_scope,
+        period_start=pl_period_start,
+        missing_period_start=pl_missing_period_start,
         period_end=pl_period_end,
         revision=revision,
         available_at=available_at,
@@ -364,6 +365,57 @@ def test_bs_and_pl_period_starts_must_match_when_both_are_present(
     assert any(
         "period starts differ" in reason for reason in snapshot.unavailable_reasons
     )
+
+
+@pytest.mark.parametrize(
+    ("bs_start", "pl_start", "pl_missing", "expected_cogs", "expected_reason"),
+    [
+        (date(2024, 4, 1), None, True, Decimal("100"), None),
+        (None, date(2024, 4, 1), False, Decimal("100"), None),
+        (date(2024, 4, 1), date(2024, 4, 1), False, Decimal("100"), None),
+        (
+            date(2024, 5, 1),
+            date(2024, 4, 1),
+            False,
+            None,
+            "period starts differ",
+        ),
+    ],
+    ids=["bs-only-start", "pl-only-start", "equal-starts", "different-starts"],
+)
+def test_bs_pl_period_start_compatibility(
+    session: Session,
+    bs_start: date | None,
+    pl_start: date | None,
+    pl_missing: bool,
+    expected_cogs: Decimal | None,
+    expected_reason: str | None,
+) -> None:
+    calculator, _, company, source, items = _setup(session, years=())
+    _insert_year(
+        session,
+        company.id,
+        source.id,
+        items,
+        2024,
+        "10",
+        "100",
+        bs_period_start=bs_start,
+        pl_period_start=pl_start,
+        pl_missing_period_start=pl_missing,
+    )
+
+    snapshot = calculator.execute(
+        CalculateInventoryRequest(company.id, AS_OF)
+    ).snapshots[0]
+
+    assert snapshot.cogs == expected_cogs
+    if expected_reason is None:
+        assert not any(
+            "period starts differ" in reason for reason in snapshot.unavailable_reasons
+        )
+    else:
+        assert any(expected_reason in reason for reason in snapshot.unavailable_reasons)
 
 
 def test_bs_only_fiscal_years_fall_back_to_bs_period_start(session: Session) -> None:

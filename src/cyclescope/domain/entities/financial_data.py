@@ -59,11 +59,8 @@ class FinancialStatement:
             raise DomainValidationError("revision_number must be positive.")
         if self.period_start is not None and self.period_start > self.period_end:
             raise DomainValidationError("period_start must not follow period_end.")
-        if (
-            self.statement_type in {StatementType.PL, StatementType.CF}
-            and self.period_start is None
-        ):
-            raise DomainValidationError("PL and CF statements require period_start.")
+        if self.statement_type is StatementType.CF and self.period_start is None:
+            raise DomainValidationError("CF statements require period_start.")
         if (
             len(self.reporting_currency) != 3
             or not self.reporting_currency.isupper()
