@@ -253,6 +253,7 @@ def _calculate(
     config: IndustrySupplyDemandConfig | None = None,
     source_id: int | None = None,
     scope: tuple[tuple[int, str], ...] = SCOPE,
+    target_period_end: date = date(2025, 12, 31),
 ) -> IndustrySupplyDemandSnapshot:
     rows = flows or _flows()
     inventories = (inventory,) if inventory is not None else ()
@@ -264,6 +265,7 @@ def _calculate(
         aggregate_region_id=1,
         aggregate_region_code="WORLD",
         requested_scope=scope,
+        target_period_end=target_period_end,
         as_of=CUTOFF,
         calculated_at=CUTOFF,
         config=config or _config(flow_gap_tolerance=Decimal("0.25")),
@@ -562,6 +564,84 @@ def test_latest_snapshot_is_selected_by_as_of_then_id() -> None:
         ref for ref in result.input_references if ref.role == "CURRENT_PRODUCTION"
     )
     assert selected.aggregate_id == 105
+
+
+def test_requested_period_is_selected_without_latest_period_fallback() -> None:
+    unavailable = _calculate(target_period_end=date(2026, 1, 31))
+    assert unavailable.status is IndustrySupplyDemandStatus.INSUFFICIENT_DATA
+    assert unavailable.period_end is None
+    assert unavailable.production_value is None
+    assert any(
+        "target period end 2026-01-31" in reason
+        for reason in unavailable.unavailable_reasons
+    )
+
+    selected = _calculate(target_period_end=date(2024, 12, 31))
+    assert selected.period_end == date(2024, 12, 31)
+    assert selected.production_value == Decimal("45")
+
+
+@pytest.mark.parametrize(
+    ("production", "expected_phase"),
+    [
+        ("1.1000000000004", IndustrySupplyDemandPhase.OVERSUPPLY),
+        ("1.0999999999996", IndustrySupplyDemandPhase.UNKNOWN),
+    ],
+)
+def test_raw_gap_ratio_controls_threshold_before_rounding(
+    production: str, expected_phase: IndustrySupplyDemandPhase
+) -> None:
+    flows = _flows(production=production, shipments="1", prior_shipments="1")
+    context = _inventory(
+        flows,
+        classification=IndustryInventoryClassification.NORMALIZATION,
+        yoy=Decimal("0.10"),
+    )
+    result = _calculate(
+        flows,
+        context,
+        config=_config(flow_gap_tolerance=Decimal("0.10")),
+    )
+    assert result.flow_gap_ratio == Decimal("0.100000000000")
+    assert result.phase is expected_phase
+
+
+@pytest.mark.parametrize(
+    ("shipments", "expected_phase"),
+    [
+        ("1.1000000000004", IndustrySupplyDemandPhase.DEMAND_RECOVERY),
+        ("1.0999999999996", IndustrySupplyDemandPhase.BALANCED),
+    ],
+)
+def test_raw_shipment_growth_controls_threshold_before_rounding(
+    shipments: str, expected_phase: IndustrySupplyDemandPhase
+) -> None:
+    flows = _flows(
+        production=shipments,
+        shipments=shipments,
+        prior_shipments="1",
+    )
+    inventory_classification = (
+        IndustryInventoryClassification.DRAWDOWN
+        if expected_phase is IndustrySupplyDemandPhase.DEMAND_RECOVERY
+        else IndustryInventoryClassification.NORMALIZATION
+    )
+    context = _inventory(
+        flows,
+        classification=inventory_classification,
+        yoy=(
+            Decimal("-0.15")
+            if expected_phase is IndustrySupplyDemandPhase.DEMAND_RECOVERY
+            else Decimal("0")
+        ),
+    )
+    result = _calculate(
+        flows,
+        context,
+        config=_config(flow_gap_tolerance=Decimal("0.25")),
+    )
+    assert result.shipment_growth_yoy == Decimal("0.100000000000")
+    assert result.phase is expected_phase
 
 
 def test_inventory_nearest_date_is_not_substituted() -> None:

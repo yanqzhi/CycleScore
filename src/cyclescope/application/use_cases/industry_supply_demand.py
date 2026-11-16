@@ -50,6 +50,7 @@ class AnalyzeIndustrySupplyDemand:
             aggregate_region_id=request.aggregate_region_id,
             aggregate_region_code=request.aggregate_region_code,
             requested_scope=request.requested_scope,
+            target_period_end=request.target_period_end,
             source_id=request.source_id,
             as_of=cutoff,
             calculated_at=datetime.now(UTC),

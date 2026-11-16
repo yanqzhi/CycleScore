@@ -81,6 +81,9 @@ observations or duplicate Sprint 18 inventory calculations.
 ### Application
 
 -   Add typed request/response DTOs.
+-   Require `target_period_end` in the analysis request and select only
+    the exact requested period; never fall back to a different latest
+    period. Persist a clear unavailable result when no exact pair exists.
 -   Add `AnalyzeIndustrySupplyDemand` using constructor-injected
     repositories.
 -   Application coordinates reads, cohort selection, Domain calculation,
@@ -118,7 +121,10 @@ Do not reduce classification to a sign check. Oversupply and undersupply
 require corroborating evidence; a large production/shipments gap alone
 is insufficient. Do not infer direction from missing values. Do not
 introduce hidden score weights, guessed thresholds, Orders/Sales
-fallback, or confidence formulas.
+fallback, or confidence formulas. Keep raw expanded-precision Decimal
+ratios and growth values for classification comparisons; round only the
+values persisted in the final snapshot, with NUMERIC overflow checked at
+that boundary.
 
 ## Documentation
 

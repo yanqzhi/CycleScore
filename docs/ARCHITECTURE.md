@@ -138,7 +138,11 @@ shipments aggregates and Sprint 18 inventory snapshots at one UTC `as_of`.
 The Domain service pairs only exact periods and compatible source, unit,
 currency, classification, policy, requested-scope, and actual-contributor
 cohorts. Historical shipment growth requires exact calendar-anniversary
-periods. Inventory context is accepted only when it references the exact flow
+periods. Every analysis request names a mandatory `target_period_end`; the
+service never substitutes another latest period when that date has no valid
+pair. Ratios and shipment growth retain expanded-precision Decimal values for
+classification, then round at snapshot construction. Inventory context is
+accepted only when it references the exact flow
 aggregate IDs; the service never re-aggregates source observations or infers
 scope from current Region Master relationships.
 

@@ -421,10 +421,6 @@ def _evidence_fraction(count: int) -> Decimal:
         raise DomainValidationError("Evidence coverage arithmetic failed.") from exc
 
 
-def _difference(left: Decimal, right: Decimal) -> Decimal:
-    return _checked(_difference_raw(left, right))
-
-
 def _difference_raw(left: Decimal, right: Decimal) -> Decimal:
     try:
         with localcontext() as context:
@@ -440,7 +436,7 @@ def _ratio(numerator: Decimal, denominator: Decimal, label: str) -> Decimal:
     try:
         with localcontext() as context:
             context.prec = 80
-            return _checked(numerator / denominator)
+            return numerator / denominator
     except DecimalException as exc:
         raise DomainValidationError(f"{label} arithmetic failed.") from exc
 
@@ -451,7 +447,7 @@ def _ratio_change(numerator: Decimal, denominator: Decimal, label: str) -> Decim
     try:
         with localcontext() as context:
             context.prec = 80
-            return _checked((numerator / denominator) - _ONE)
+            return (numerator / denominator) - _ONE
     except DecimalException as exc:
         raise DomainValidationError(f"{label} arithmetic failed.") from exc
 
@@ -539,6 +535,7 @@ def calculate_industry_supply_demand(
     aggregate_region_id: int | None,
     aggregate_region_code: str,
     requested_scope: tuple[tuple[int, str], ...],
+    target_period_end: date,
     as_of: datetime,
     calculated_at: datetime,
     config: IndustrySupplyDemandConfig,
@@ -554,6 +551,10 @@ def calculate_industry_supply_demand(
     scope = tuple(sorted(requested_scope))
     if not scope or len(set(scope)) != len(scope):
         raise DomainValidationError("Requested scope must be unique and non-empty.")
+    if not isinstance(target_period_end, date) or isinstance(
+        target_period_end, datetime
+    ):
+        raise DomainValidationError("target_period_end must be a calendar date.")
 
     pairs, rejected = _pair_rows(
         aggregates,
@@ -565,13 +566,16 @@ def calculate_industry_supply_demand(
         requested_scope=scope,
         source_id=source_id,
     )
-    source_ids = {pair.production.source_id for pair in pairs}
+    target_pairs = [
+        pair for pair in pairs if pair.production.period_end == target_period_end
+    ]
+    source_ids = {pair.production.source_id for pair in target_pairs}
     if source_id is None and len(source_ids) > 1:
         raise DomainValidationError(
             "Multiple eligible source cohorts require explicit source selection."
         )
     current = max(
-        pairs,
+        target_pairs,
         key=lambda pair: (
             pair.production.period_end or date.min,
             pair.production.as_of,
@@ -646,7 +650,10 @@ def calculate_industry_supply_demand(
 
     reasons: list[str] = []
     if current is None:
-        reasons.append("No valid exact-period production/shipments pair is available.")
+        reasons.append(
+            "No valid compatible production/shipments pair is available for "
+            f"target period end {target_period_end.isoformat()}."
+        )
     else:
         if prior is None:
             reasons.append(
@@ -658,15 +665,15 @@ def calculate_industry_supply_demand(
 
     production = current.production if current is not None else None
     shipments = current.shipments if current is not None else None
-    flow_gap = None
+    flow_gap_raw = None
     gap_ratio = None
     shipment_growth = None
     if production is not None and shipments is not None:
         assert production.value is not None and shipments.value is not None
-        flow_gap = _difference(production.value, shipments.value)
+        flow_gap_raw = _difference_raw(production.value, shipments.value)
         if shipments.value > _ZERO:
             gap_ratio = _ratio(
-                _difference_raw(production.value, shipments.value),
+                flow_gap_raw,
                 shipments.value,
                 "Flow gap ratio",
             )
@@ -851,9 +858,11 @@ def calculate_industry_supply_demand(
         status=status,
         production_value=production.value if production is not None else None,
         shipments_value=shipments.value if shipments is not None else None,
-        flow_gap=flow_gap,
-        flow_gap_ratio=gap_ratio,
-        shipment_growth_yoy=shipment_growth,
+        flow_gap=_checked(flow_gap_raw) if flow_gap_raw is not None else None,
+        flow_gap_ratio=_checked(gap_ratio) if gap_ratio is not None else None,
+        shipment_growth_yoy=(
+            _checked(shipment_growth) if shipment_growth is not None else None
+        ),
         inventory_snapshot_id=inventory.id if inventory is not None else None,
         inventory_classification=inventory_classification,
         inventory_trend=inventory_trend,

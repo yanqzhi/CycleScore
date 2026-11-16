@@ -387,6 +387,7 @@ def test_supply_demand_use_case_round_trips_with_exact_pit_provenance(
                 aggregate_region_id=1,
                 aggregate_region_code="WORLD",
                 requested_scope=scope,
+                target_period_end=date(2025, 12, 31),
                 source_id=source.id,
                 as_of=CUTOFF,
                 config=IndustrySupplyDemandConfig(
@@ -459,6 +460,7 @@ def test_supply_demand_snapshot_and_audits_follow_caller_rollback(
         aggregate_region_id=1,
         aggregate_region_code="WORLD",
         requested_scope=scope,
+        target_period_end=date(2025, 12, 31),
         source_id=source.id,
         as_of=CUTOFF,
         config=IndustrySupplyDemandConfig(
@@ -481,6 +483,51 @@ def test_supply_demand_snapshot_and_audits_follow_caller_rollback(
     assert session.query(IndustrySupplyDemandSnapshotModel).count() == 0
     assert session.query(IndustrySupplyDemandInputModel).count() == 0
     assert session.query(IndustrySupplyDemandScopeModel).count() == 0
+    assert session.query(IndustrySignalAggregateModel).count() == aggregate_count
+    assert session.query(IndustryInventorySnapshotModel).count() == inventory_count
+
+
+def test_supply_demand_use_case_does_not_fall_back_from_requested_period(
+    session: Session,
+) -> None:
+    aggregate_repo, industry, _source, scope = _aggregate_series(session)
+    inventory_repo = SQLAlchemyIndustryInventoryRepository(session)
+    repository = SQLAlchemyIndustrySupplyDemandRepository(session)
+    aggregate_count = session.query(IndustrySignalAggregateModel).count()
+    inventory_count = session.query(IndustryInventorySnapshotModel).count()
+    result = (
+        AnalyzeIndustrySupplyDemand(aggregate_repo, inventory_repo, repository)
+        .execute(
+            AnalyzeIndustrySupplyDemandRequest(
+                industry_id=industry.id or 0,
+                aggregate_region_id=1,
+                aggregate_region_code="WORLD",
+                requested_scope=scope,
+                target_period_end=date(2026, 1, 31),
+                as_of=CUTOFF,
+                config=IndustrySupplyDemandConfig(
+                    version=1,
+                    minimum_coverage=Decimal("0.80"),
+                    flow_gap_tolerance=Decimal("0.10"),
+                    strong_demand_growth=Decimal("0.10"),
+                    negative_demand_growth=Decimal("-0.05"),
+                    inventory_accumulation_yoy=Decimal("0.10"),
+                    inventory_drawdown_yoy=Decimal("-0.10"),
+                    minimum_evidence_coverage=Decimal("0.50"),
+                ),
+            )
+        )
+        .snapshot
+    )
+
+    assert result.status is IndustrySupplyDemandStatus.INSUFFICIENT_DATA
+    assert result.period_end is None
+    assert result.production_value is None
+    assert any(
+        "target period end 2026-01-31" in reason
+        for reason in result.unavailable_reasons
+    )
+    assert repository.get_by_id(result.id or 0) == result
     assert session.query(IndustrySignalAggregateModel).count() == aggregate_count
     assert session.query(IndustryInventorySnapshotModel).count() == inventory_count
 

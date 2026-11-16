@@ -81,6 +81,12 @@ values; production callers must make an explicit calibrated choice.
 
 ### Aggregate inputs
 
+The Application request requires an explicit `target_period_end`. The
+selected current Production/Shipments pair must end on exactly that date. If
+no compatible pair exists for the requested date, persist an unavailable
+snapshot with an explicit reason; never fall back to the latest available
+period. The target date must also satisfy the request's PIT cutoff.
+
 Use the existing
 `IndustrySignalAggregateRepository.list_by_industry(industry_id, as_of=...)`
 to load candidates. Required types are `PRODUCTION` and `SHIPMENTS`,
@@ -144,10 +150,12 @@ with a reason.
 
 ## 5. Calculations
 
-Use Decimal only. Use expanded `localcontext()` precision. Round only at
-the result boundary using `ROUND_HALF_EVEN` to 12 fractional places.
-Validate finite values and \<=26 integer digits for `NUMERIC(38,12)`.
-Convert Decimal arithmetic exceptions to `DomainValidationError`.
+Use Decimal only. Use expanded `localcontext()` precision. Keep raw ratio and
+shipment-growth results for all phase-threshold comparisons. Round only when
+constructing the persisted snapshot using `ROUND_HALF_EVEN` to 12 fractional
+places. Validate finite values and \<=26 integer digits for `NUMERIC(38,12)`
+at that boundary. Convert Decimal arithmetic and quantization exceptions to
+`DomainValidationError`.
 
 Let `P_t` and `S_t` be current paired production and shipments; `S_y` is
 prior-year shipments.
@@ -260,8 +268,9 @@ deterministic order.
 
 Add typed request/response DTOs and `AnalyzeIndustrySupplyDemand` use
 case. Request includes industry, optional sub-industry, aggregate
-region, explicit constituent scope, timezone-aware `as_of`, optional
-explicit source, and required config. Use constructor-injected
+region, explicit constituent scope, mandatory `target_period_end`,
+timezone-aware `as_of`, optional explicit source, and required config. Use
+constructor-injected
 repositories. The use case loads candidates, resolves
 compatibility/ambiguity, calls pure Domain calculation, persists, and
 returns DTO. It never commits. No ORM/session leakage into
